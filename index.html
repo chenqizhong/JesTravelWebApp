@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Our Travel Planner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-50 font-sans antialiased text-slate-800">
+
+    <div id="screen-login" class="min-h-screen bg-slate-50 flex flex-col justify-center items-center px-6">
+        <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-xl border border-slate-100 space-y-5 fade-in">
+            <div class="flex bg-slate-100 p-1 rounded-xl">
+                <button id="tab-login-btn" onclick="switchLoginTab('login')" class="flex-1 py-2 text-xs font-black rounded-lg bg-white text-slate-700 shadow-sm transition-all">帳號登入</button>
+                <button id="tab-register-btn" onclick="switchLoginTab('register')" class="flex-1 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-600 transition-all">加入旅團</button>
+            </div>
+            <span id="login-title" class="block text-center text-lg font-black text-slate-700">歡迎回到旅遊小助手 👋</span>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-[11px] font-bold text-slate-400 block mb-1">旅團識別碼 (共同代碼)</label>
+                    <input type="text" id="trip-code-input" placeholder="請輸入團號，例如: TOKYO2026" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 text-sm rounded-xl focus:outline-none focus:border-[#FF9E64] font-bold tracking-wider uppercase">
+                </div>
+                <div>
+                    <label class="text-[11px] font-bold text-slate-400 block mb-1">個人帳號</label>
+                    <input type="text" id="user-account-input" placeholder="設定或輸入你的帳號" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 text-sm rounded-xl focus:outline-none focus:border-[#FF9E64]">
+                </div>
+                <div>
+                    <label class="text-[11px] font-bold text-slate-400 block mb-1">登入密碼</label>
+                    <input type="password" id="user-password-input" placeholder="請輸入密碼" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 text-sm rounded-xl focus:outline-none focus:border-[#FF9E64]">
+                </div>
+            </div>
+            <div class="space-y-2.5 pt-1">
+                <button id="submit-auth-btn" onclick="handleAuthSubmit()" class="w-full py-3 bg-[#FF9E64] text-white font-black rounded-xl text-sm shadow-md shadow-orange-100 transition active:scale-95">確認登入</button>
+                <button id="face-id-btn" onclick="handleFaceIDLogin()" class="w-full py-3 bg-slate-50 border border-slate-100 text-slate-600 font-bold rounded-xl text-xs transition active:scale-95 flex items-center justify-center gap-2 hidden">
+                    <i class="fa-solid fa-face-id text-base text-[#FF9E64]"></i> 快速 Face ID 驗證登入
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="screen-trip" class="max-w-md mx-auto bg-white min-h-screen shadow-xl flex flex-col pb-20 hidden">
+        <header id="trip-header" class="bg-white border-b border-slate-100 p-4 sticky top-0 z-10 flex justify-between items-center"></header>
+        
+        <section class="px-4 pt-4">
+            <div class="w-full h-40 rounded-2xl overflow-hidden border border-slate-100 shadow-sm relative">
+                <iframe id="google-map-iframe" class="w-full h-full border-0" src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d103706.74542385155!2d139.7040502!3d35.6735398!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x60188b857628235d%3A0xc0d00f9c5c35b85a!2z5p2x5Lqs!5e0!3m2!1szh-TW!2stw!4v1710000000000!5m2!1szh-TW!2stw" allowfullscreen="" loading="lazy"></iframe>
+            </div>
+        </section>
+
+        <section class="p-4 grid grid-cols-2 gap-3">
+            <div id="weather-box"></div>
+            <div id="packing-box" onclick="openPackingModal()" class="bg-slate-50 p-3 rounded-2xl border border-slate-100 cursor-pointer hover:bg-slate-100/50 transition"></div>
+        </section>
+        
+        <div class="px-4 py-1 flex gap-2 overflow-x-auto no-scrollbar" id="day-tabs-container"></div>
+        
+        <main class="flex-1 p-4 space-y-4" id="schedule-container"></main>
+    </div>
+
+    <div id="screen-admin" class="max-w-md mx-auto p-6 bg-white min-h-screen shadow-xl hidden space-y-6">
+        <div class="flex justify-between items-center">
+            <h2 class="text-lg font-black text-slate-800"><i class="fa-solid fa-sliders-up text-red-400"></i> 求婚顧問後台</h2>
+            <button onclick="switchScreen('trip')" class="text-xs text-slate-400 underline">返回行程</button>
+        </div>
+        
+        <div class="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-3">
+            <h3 class="font-bold text-xs text-slate-600">⚙️ 基礎旅團與天氣設定</h3>
+            <div class="space-y-2">
+                <div class="flex justify-between items-center gap-2">
+                    <span class="text-xs text-slate-500">規劃總天數：</span>
+                    <input type="number" id="admin-total-days" min="1" max="30" class="w-16 px-2 py-1 text-center border font-bold rounded-lg bg-white">
+                </div>
+                <div class="flex justify-between items-center gap-2">
+                    <span class="text-xs text-slate-500">旅遊主題：</span>
+                    <input type="text" id="admin-trip-title" class="w-36 px-2 py-1 border text-xs font-bold rounded-lg bg-white">
+                </div>
+                <div class="flex justify-between items-center gap-2">
+                    <span class="text-xs text-slate-500">天氣都市與氣溫：</span>
+                    <div class="flex gap-1">
+                        <input type="text" id="admin-weather-city" placeholder="都市" class="w-16 px-2 py-1 border text-xs rounded-lg bg-white">
+                        <input type="text" id="admin-weather-temp" placeholder="氣溫" class="w-16 px-2 py-1 border text-xs rounded-lg bg-white">
+                    </div>
+                </div>
+                <button onclick="saveAdminSettings()" class="w-full mt-2 py-2 bg-[#FF9E64] text-white text-xs font-black rounded-lg">儲存基礎設定</button>
+            </div>
+        </div>
+
+        <div class="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-3">
+            <h3 class="font-bold text-xs text-red-400">📖 動態求婚投影片設定 (資料庫綁定)</h3>
+            <div class="space-y-2" id="admin-slides-container"></div>
+            <button onclick="saveProposalSlides()" class="w-full py-2 bg-red-400 text-white text-xs font-black rounded-lg">儲存求婚計畫內容</button>
+        </div>
+
+        <div class="bg-red-50 border border-red-100 rounded-2xl p-4 space-y-4">
+            <div class="flex justify-between items-center p-2.5 bg-white rounded-xl border border-red-100/70 shadow-sm">
+                <div class="flex flex-col text-left">
+                    <span class="text-xs font-black text-slate-700">🔒 求婚安全總開關</span>
+                    <span class="text-[10px] text-slate-400">開啟後才允許觸發大螢幕訊號</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="admin-proposal-ready-toggle" onchange="toggleProposalReadyState(this.checked)" class="sr-only peer">
+                    <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4  after:w-4 after:transition-all peer-checked:bg-red-500"></div>
+                </label>
+            </div>
+
+            <p class="text-[11px] text-red-500 font-medium text-center">⚠️ 啟用安全開關並點擊啟動後，對方的網頁才會彈出獨立求婚視窗！</p>
+            
+            <div class="flex gap-2">
+                <button id="admin-launch-btn" onclick="triggerProposalSignal(true)" class="flex-1 py-3 bg-red-500 text-white font-black text-xs rounded-xl shadow-md transition active:scale-95">🚀 啟動求婚</button>
+                <button onclick="previewProposalWindow()" class="py-3 px-4 bg-slate-800 text-white font-bold text-xs rounded-xl transition active:scale-95 flex items-center gap-1">👁️ 獨享預覽</button>
+                <button onclick="triggerProposalSignal(false)" class="py-3 px-3 bg-slate-200 text-slate-600 font-bold text-xs rounded-xl">關閉</button>
+            </div>
+            
+            <div id="admin-sync-controller" class="pt-4 border-t border-red-100 flex justify-between items-center hidden">
+                <span class="text-xs font-bold text-red-500">主控同步翻頁：</span>
+                <div class="flex gap-1.5">
+                    <button onclick="syncSlidePage(-1)" class="px-3 py-1 bg-slate-700 text-white text-xs font-bold rounded-lg">⬅️ 上一頁</button>
+                    <span id="admin-current-page-num" class="text-xs font-black text-slate-700 px-2 flex items-center">1/3</span>
+                    <button onclick="syncSlidePage(1)" class="px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-lg">下一頁 ➡️</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="schedule-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-white w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl fade-in">
+            <h3 id="schedule-modal-title" class="font-black text-base text-slate-700">✏️ 編輯行程景點</h3>
+            <input type="hidden" id="form-schedule-id">
+            <div class="space-y-3">
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 block mb-0.5">時間</label>
+                        <input type="time" id="form-schedule-time" class="w-full px-3 py-2 bg-slate-50 border rounded-xl font-bold text-xs">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 block mb-0.5">景點照片連結 (URL)</label>
+                        <input type="text" id="form-schedule-img" placeholder="https://..." class="w-full px-3 py-2 bg-slate-50 border rounded-xl text-xs font-medium">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-slate-400 block mb-0.5">景點名稱</label>
+                    <input type="text" id="form-schedule-name" placeholder="例：東京鐵塔 🗼" class="w-full px-3 py-2 bg-slate-50 border rounded-xl font-medium text-sm">
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-slate-400 block mb-0.5">詳細備註 / 連結</label>
+                    <textarea id="form-schedule-desc" placeholder="例：預約了 18:30 的景觀台門票" class="w-full px-3 py-2 bg-slate-50 border rounded-xl text-xs h-20"></textarea>
+                </div>
+            </div>
+            <div class="flex gap-2 pt-2">
+                <button onclick="closeScheduleModal()" class="flex-1 py-2.5 bg-slate-100 font-bold text-xs rounded-xl text-slate-500">取消</button>
+                <button onclick="saveScheduleForm()" class="flex-1 py-2.5 bg-[#FF9E64] text-white font-black text-xs rounded-xl shadow-md">儲存景點</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="packing-modal" class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center hidden">
+        <div class="bg-white w-full max-w-md rounded-t-3xl p-6 space-y-4 max-h-[75vh] flex flex-col fade-in">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-black text-base text-slate-700">🎒 共享行李清單 (可拖曳排序)</h3>
+                <button onclick="closePackingModal()" class="text-slate-400 p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div class="flex gap-2">
+                <input type="text" id="new-packing-item" placeholder="+ 新增行李項目..." class="flex-1 px-3 py-2 bg-slate-50 border text-xs rounded-xl focus:outline-none">
+                <button onclick="addPackingItem()" class="px-4 py-2 bg-slate-800 text-white font-bold text-xs rounded-xl">新增</button>
+            </div>
+            <div id="modal-items-list" class="flex-1 overflow-y-auto space-y-2.5 pr-1 no-scrollbar"></div>
+        </div>
+    </div>
+
+    <div id="security-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-white w-full max-w-xs rounded-2xl p-5 space-y-4 shadow-2xl text-center fade-in">
+            <div class="w-12 h-12 bg-orange-50 text-[#FF9E64] rounded-full flex items-center justify-center text-xl mx-auto"><i class="fa-solid fa-shield-halved"></i></div>
+            <div>
+                <h3 class="font-black text-sm text-slate-700">管理身分驗證</h3>
+                <p class="text-[11px] text-slate-400 mt-1">請輸入四位數安全密碼</p>
+            </div>
+            <input type="password" id="security-password-input" class="w-full text-center tracking-widest px-3 py-2 bg-slate-50 border rounded-xl font-bold" placeholder="••••">
+            <div class="flex gap-2">
+                <button onclick="closeSecurityModal()" class="flex-1 py-2 bg-slate-100 text-slate-500 font-bold text-xs rounded-lg">取消</button>
+                <button onclick="verifySecurityPassword()" class="flex-1 py-2 bg-[#FF9E64] text-white font-bold text-xs rounded-lg">確認驗證</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleProposalReadyState(isChecked) {
+        const launchBtn = document.getElementById('admin-launch-btn');
+            if(!launchBtn) return;
+            launchBtn.disabled = !isChecked;
+            if(isChecked) {
+                // 當開關開啟時：解除禁用，恢復成原本紅色的啟動樣式
+                launchBtn.className = "flex-1 py-3 bg-red-500 text-white font-black text-xs rounded-xl shadow-md transition active:scale-95";
+            } else {
+                // 當開關關閉時：啟用禁用，變成灰色不可點擊樣式
+                launchBtn.className = "flex-1 py-3 bg-slate-300 text-slate-500 font-black text-xs rounded-xl shadow-none cursor-not-allowed transition-all";
+            }
+        }
+    </script>
+    <script type="module" src="app.js"></script>
+</body>
+</html>

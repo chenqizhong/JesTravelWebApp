@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✨ 屬於我們的驚喜冒險 ✨</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .fade-in { animation: fadeInEffect 0.6s ease-out forwards; }
+        @keyframes fadeInEffect { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .bg-gradient-romantic { background: linear-gradient(135deg, #fff5f5 0%, #fff0f6 100%); }
+    </style>
+</head>
+<body class="bg-gradient-romantic text-slate-800 min-h-screen flex flex-col justify-between p-6 antialiased">
+
+    <div class="w-full max-w-md mx-auto pt-2">
+        <div id="proposal-progress" class="flex gap-1.5 w-full">
+            </div>
+    </div>
+
+    <div class="w-full max-w-md mx-auto flex-1 flex flex-col justify-center my-6 text-center space-y-6">
+        <div id="proposal-content-area" class="space-y-4">
+            <div class="text-slate-300 py-12"><i class="fa-solid fa-heart pulse text-red-300 text-3xl animate-bounce"></i></div>
+        </div>
+    </div>
+
+    <div class="w-full max-w-md mx-auto pb-4 flex flex-col items-center justify-center min-h-[80px]">
+        <div id="proposal-action-area" class="w-full flex justify-center">
+            </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBktdfxqqthd9BxEKYzpp846v2KUthP36Q",
+            authDomain: "jestravelwebapp.firebaseapp.com",
+            databaseURL: "https://jestravelwebapp-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "jestravelwebapp",
+            storageBucket: "jestravelwebapp.firebasestorage.app",
+            messagingSenderId: "1089232899793",
+            appId: "1:1089232899793:web:c3f2b1233ab27661983ff0",
+            measurementId: "G-E4M7MEQ6GK"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // 剖析 URL 帶進來的旅團代碼與預覽參數
+        const urlParams = new URLSearchParams(window.location.search);
+        const tripCode = (urlParams.get('code') || '').toUpperCase();
+        const isPreviewMode = urlParams.get('preview') === 'true';
+
+        if (!tripCode) {
+            document.getElementById('proposal-content-area').innerHTML = `<p class="text-xs text-red-400 font-bold">❌ 找不到正確的旅團識別碼，請重新從主程式登入。</p>`;
+        } else {
+            startSync();
+        }
+
+        // 🔒 安全閉環返回常態行程的控制函式
+        window.backToItinerary = function() {
+            if (isPreviewMode) {
+                // 情境：Admin 獨享安全預覽結束 -> 關閉此分頁，不發改動訊號，且確保 state.isPlanner 依然是正常執行狀態
+                window.close();
+                window.location.href = `index.html`;
+            } else {
+                // 情境：正式啟動下點完返回 -> 將廣播廣播訊號熄滅（降回 false），全員安全解散返回主行程
+                set(ref(db, `trips/${tripCode}/proposalSignal`), false).then(() => {
+                    window.close();
+                    window.location.href = `index.html`;
+                });
+            }
+        };
+
+        function startSync() {
+            onValue(ref(db, `trips/${tripCode}`), (snapshot) => {
+                if (!snapshot.exists()) return;
+                const data = snapshot.val();
+                
+                const signal = data.proposalSignal || false;
+                const slides = data.proposalSlides || [];
+                const currentIndex = data.currentSlideIndex || 0;
+
+                // 👑 安全防線：如果雲端正式求婚訊號被降為 false，且當下「不是」Admin 刻意在看單機預覽
+                // 則立即觸發全員自動安全卸載，回到 index.html 行程表，不留痕跡
+                if (signal === false && !isPreviewMode) {
+                    window.location.href = "index.html";
+                    return;
+                }
+
+                if (slides.length === 0) return;
+                const currentSlide = slides[currentIndex];
+
+                // 1. 動態演繹上方小點進度條
+                const progressContainer = document.getElementById('proposal-progress');
+                progressContainer.innerHTML = '';
+                slides.forEach((_, idx) => {
+                    const bar = document.createElement('div');
+                    bar.className = `h-1 rounded-full flex-1 transition-all duration-500 ${idx <= currentIndex ? 'bg-red-400 shadow-sm' : 'bg-slate-200'}`;
+                    progressContainer.appendChild(bar);
+                });
+
+                // 2. 動態演繹主畫面內容（告白文字 + 照片網址）
+                const contentArea = document.getElementById('proposal-content-area');
+                contentArea.innerHTML = '';
+
+                if (currentSlide.imgUrl && currentSlide.imgUrl.trim() !== '') {
+                    const img = document.createElement('img');
+                    img.src = currentSlide.imgUrl.trim();
+                    img.className = "w-full max-h-64 object-cover rounded-2xl shadow-md fade-in mb-3 border-2 border-white";
+                    contentArea.appendChild(img);
+                }
+
+                const textParagraph = document.createElement('p');
+                textParagraph.className = "text-base font-black text-slate-700 leading-relaxed fade-in px-4 whitespace-pre-line";
+                textParagraph.innerText = currentSlide.text || '';
+                contentArea.appendChild(textParagraph);
+
+                // 3. 底部動作控制區（判定是否為最終抉擇頁，或單機預覽模式）
+                const actionArea = document.getElementById('proposal-action-area');
+                actionArea.innerHTML = '';
+
+                if (currentIndex === slides.length - 1) {
+                    // 抵達最後一頁：灌入大愛心抉擇按鈕
+                    const btnWrapper = document.createElement('div');
+                    btnWrapper.className = "flex flex-col gap-2 w-full max-w-[240px] fade-in";
+                    
+                    const choicesString = currentSlide.choices || "我願意 💍, 超級願意 ❤️";
+                    const choicesArray = choicesString.split(',');
+                    
+                    choicesArray.forEach(choiceText => {
+                        const btn = document.createElement('button');
+                        btn.className = "w-full py-3 bg-red-400 hover:bg-red-500 text-white font-black text-xs rounded-xl shadow-lg active:scale-95 transition-all";
+                        btn.innerText = choiceText.trim();
+                        btn.onclick = () => {
+                            alert('💍 恭喜！！求婚計畫特大成功！！！ 🥂✨❤️');
+                            backToItinerary(); // 按下後自動解除廣播，全員浪漫返航
+                        };
+                        btnWrapper.appendChild(btn);
+                    });
+                    actionArea.appendChild(btnWrapper);
+                } else {
+                    // 尚未到最後一頁
+                    if (isPreviewMode) {
+                        // 👑 Admin 獨享安全預覽模式下：提供一個隨時可以點的「退出預覽」功能，防止迷路
+                        const exitBtn = document.createElement('button');
+                        exitBtn.className = "text-[11px] bg-slate-200 hover:bg-slate-300 text-slate-600 px-3 py-1.5 rounded-xl font-black shadow-sm transition";
+                        exitBtn.innerText = "退出預覽 (安全模式)";
+                        exitBtn.onclick = () => backToItinerary();
+                        actionArea.appendChild(exitBtn);
+                    } else {
+                        // 女友手機視窗：保持完全純淨，只出現輕微呼吸燈提示
+                        actionArea.innerHTML = `<span class="text-[10px] text-slate-300 font-bold tracking-widest animate-pulse"><i class="fa-solid fa-heart text-red-200 mr-1"></i> 浪漫章節加載中...</span>`;
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
