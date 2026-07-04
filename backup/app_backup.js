@@ -36,8 +36,7 @@ const state = {
     proposalMusicUrl: '',
     currentSlideIndex: 0,
     proposalSignal: false,
-    proposalReady: false,
-    proposalPreviewMode: false // true：admin正在「獨享預覽」，此時不套用自動連動跳轉規則
+    proposalReady: false
 };
 
 // ────────────────────────────────────────────────────────
@@ -171,6 +170,8 @@ function loginSuccess(tripCode, account) {
 // ────────────────────────────────────────────────────────
 // 🔄 Firebase 即時雲端數據同步
 // ────────────────────────────────────────────────────────
+let isProposolWindowOpened = false; // 防重複開啟標記
+
 function startRealtimeSync() {
     // 監聽 Meta (主題、天氣、總天數)
     onValue(ref(db, `trips/${state.tripCode}/meta`), (snapshot) => {
@@ -226,12 +227,6 @@ function startRealtimeSync() {
             musicInput.value = state.proposalMusicUrl;
         }
 
-        // 2-2. 同步安全開關 checkbox 的勾選狀態，避免「畫面看起來是關的，但其實資料庫是開的」這種誤導
-        const readyToggle = document.getElementById('admin-proposal-ready-toggle');
-        if (readyToggle) {
-            readyToggle.checked = state.proposalReady;
-        }
-
         // 3. 更新頁碼顯示
         const pageNumText = document.getElementById('admin-current-page-num');
         if (pageNumText) {
@@ -245,6 +240,15 @@ function startRealtimeSync() {
             else ctrlBox.classList.add('hidden');
         }
 
+        // 5. 🚀 多機即時連動 (Admin 與 User 同步)
+        if (state.proposalSignal === true && !isProposolWindowOpened) {
+            isProposolWindowOpened = true;
+            window.open(`proposal.html?code=${state.tripCode}`, '_blank');
+        }
+        if (state.proposalSignal === false) {
+            isProposolWindowOpened = false;
+        }
+
         const launchBtn = document.getElementById('admin-launch-btn');
         if (launchBtn) {
             launchBtn.disabled = !state.proposalReady;
@@ -255,22 +259,6 @@ function startRealtimeSync() {
                 launchBtn.className =
                     "flex-1 py-3 bg-slate-300 text-slate-500 font-black text-xs rounded-xl shadow-none cursor-not-allowed transition-all";
             }
-        }
-
-        // 5. 🚀 全員自動連動（同視窗切換，不開新分頁）：
-        //    訊號開 -> 所有人自動被帶進求婚畫面；訊號關 -> 所有人自動被送回行程。
-        //    admin 若正在「獨享預覽」中，則不套用這條自動規則，避免預覽被打斷。
-        if (!state.proposalPreviewMode) {
-            if (state.proposalSignal === true && state.currentScreen !== 'proposal') {
-                switchScreen('proposal');
-            } else if (state.proposalSignal === false && state.currentScreen === 'proposal') {
-                switchScreen('trip');
-            } else if (state.currentScreen === 'proposal') {
-                // 已經在求婚畫面上，且訊號沒有變化 -> 單純刷新頁面內容（例如有人按了上一頁/下一頁）
-                renderProposalScreen();
-            }
-        } else if (state.currentScreen === 'proposal') {
-            renderProposalScreen();
         }
     });
 }
@@ -410,9 +398,6 @@ function renderTripScreen() {
         Sortable.create(container, {
             animation: 200,
             handle: '.cursor-move',
-            delay: 150,             // 手指按住 150ms 才視為拖曳，短於此視為一般點擊/捲動
-            delayOnTouchOnly: true, // 只在觸控裝置套用延遲判定，滑鼠操作維持原本手感
-            touchStartThreshold: 5,
             onEnd: function () {
                 const updatedIds = Array.from(container.children).map(child => child.getAttribute('data-id')).filter(id => id);
                 updatedIds.forEach((id, index) => {
@@ -567,9 +552,6 @@ function renderPackingModalList() {
     Sortable.create(list, {
         animation: 200,
         handle: '.pack-drag-handle',
-        delay: 150,
-        delayOnTouchOnly: true,
-        touchStartThreshold: 5,
         onEnd: function() {
             const updatedIds = Array.from(list.children).map(c => c.getAttribute('data-id'));
             updatedIds.forEach((id, idx) => {
@@ -753,242 +735,7 @@ function saveAdminSettings() {
 // ────────────────────────────────────────────────────────
 function previewProposalWindow() {
     console.log("🔍 開啟管理員專屬靜態預覽（不更改雲端發射狀態，防漏餡）");
-    state.proposalPreviewMode = true;
-    switchScreen('proposal');
-}
-
-function exitProposalPreview() {
-    state.proposalPreviewMode = false;
-    switchScreen('admin');
-}
-
-// 所有人都可觸發：結束求婚並返回行程
-// 預覽模式下只是單純離開預覽（不動雲端訊號）；正式直播模式下會關閉訊號，讓所有連線裝置一起被送回行程。
-function endProposalAndReturn() {
-    if (state.proposalPreviewMode) {
-        exitProposalPreview();
-        return;
-    }
-    set(ref(db, `trips/${state.tripCode}/proposalSignal`), false).catch((err) => {
-        console.error('關閉求婚訊號失敗:', err);
-        // 保底：就算雲端寫入失敗，也不要讓使用者卡在求婚畫面出不去
-        switchScreen('trip');
-    });
-    // 不在這裡手動 switchScreen('trip')：等雲端監聽器收到 proposalSignal=false 後，
-    // 會自動把「所有人」（包含這個裝置自己）一起帶回行程頁，避免畫面切換邏輯重複觸發。
-}
-
-// ────────────────────────────────────────────────────────
-// 💍 求婚同步廣播畫面：渲染邏輯
-// ────────────────────────────────────────────────────────
-function renderProposalScreen() {
-    const progressContainer = document.getElementById('proposal-progress');
-    const contentArea = document.getElementById('proposal-content-area');
-    const actionArea = document.getElementById('proposal-action-area');
-    if (!progressContainer || !contentArea || !actionArea) return;
-
-    const slides = state.proposalSlides;
-    if (!slides || slides.length === 0) {
-        progressContainer.innerHTML = '';
-        contentArea.innerHTML = `<p class="text-xs text-slate-400 font-bold">目前尚未設定任何告白內容。</p>`;
-        actionArea.innerHTML = '';
-        return;
-    }
-
-    const currentIndex = Math.min(Math.max(state.currentSlideIndex, 0), slides.length - 1);
-    const currentSlide = slides[currentIndex];
-    const isLastSlide = currentIndex === slides.length - 1;
-
-    // 1. 上方小點進度條
-    progressContainer.innerHTML = '';
-    slides.forEach((_, idx) => {
-        const bar = document.createElement('div');
-        bar.className = `h-1 rounded-full flex-1 transition-all duration-500 ${idx <= currentIndex ? 'bg-red-400 shadow-sm' : 'bg-slate-200'}`;
-        progressContainer.appendChild(bar);
-    });
-
-    // 2. 主畫面內容（告白文字 + 照片）
-    contentArea.innerHTML = '';
-    if (currentSlide.imgUrl && currentSlide.imgUrl.trim() !== '') {
-        const img = document.createElement('img');
-        img.src = currentSlide.imgUrl.trim();
-        img.className = "w-full max-h-64 object-cover rounded-2xl shadow-md fade-in mb-3 border-2 border-white";
-        contentArea.appendChild(img);
-    }
-    const textParagraph = document.createElement('p');
-    textParagraph.className = "text-base font-black text-slate-700 leading-relaxed fade-in px-4 whitespace-pre-line";
-    textParagraph.innerText = currentSlide.text || '';
-    contentArea.appendChild(textParagraph);
-
-    // 3. 底部動作區
-    actionArea.innerHTML = '';
-
-    // 3-1. 上一頁 / 下一頁：所有人都能操作，同步控制所有裝置的頁面
-    const navRow = document.createElement('div');
-    navRow.className = "flex items-center justify-center gap-4 mb-3";
-    const prevBtn = document.createElement('button');
-    prevBtn.className = "w-10 h-10 rounded-full bg-white border border-slate-200 text-slate-500 shadow-sm flex items-center justify-center disabled:opacity-30 active:scale-95 transition";
-    prevBtn.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
-    prevBtn.disabled = currentIndex === 0;
-    prevBtn.onclick = () => syncSlidePage(-1);
-    const nextBtn = document.createElement('button');
-    nextBtn.className = "w-10 h-10 rounded-full bg-white border border-slate-200 text-slate-500 shadow-sm flex items-center justify-center disabled:opacity-30 active:scale-95 transition";
-    nextBtn.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
-    nextBtn.disabled = isLastSlide;
-    nextBtn.onclick = () => syncSlidePage(1);
-    navRow.appendChild(prevBtn);
-    navRow.appendChild(nextBtn);
-    actionArea.appendChild(navRow);
-
-    if (isLastSlide) {
-        // 3-2. 最終決策頁：抉擇按鈕
-        const btnWrapper = document.createElement('div');
-        btnWrapper.className = "flex flex-col gap-2 w-full max-w-[240px] mx-auto fade-in";
-        const choicesString = currentSlide.choices || "我願意 💍, 超級願意 ❤️";
-        const choicesArray = choicesString.split(',');
-        choicesArray.forEach(choiceText => {
-            const btn = document.createElement('button');
-            btn.className = "w-full py-3 bg-red-400 hover:bg-red-500 text-white font-black text-xs rounded-xl shadow-lg active:scale-95 transition-all";
-            btn.innerText = choiceText.trim();
-            btn.onclick = () => {
-                alert('💍 恭喜！！求婚計畫特大成功！！！ 🥂✨❤️');
-                endProposalAndReturn();
-            };
-            btnWrapper.appendChild(btn);
-        });
-        actionArea.appendChild(btnWrapper);
-
-        // 3-3. 返回行程規劃：所有人都看得到
-        const backBtn = document.createElement('button');
-        backBtn.className = "mt-3 text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-500 px-4 py-2 rounded-xl font-bold shadow-sm transition mx-auto block";
-        backBtn.innerText = "↩ 返回行程規劃";
-        backBtn.onclick = () => endProposalAndReturn();
-        actionArea.appendChild(backBtn);
-    } else {
-        const hint = document.createElement('div');
-        hint.className = "text-center";
-        hint.innerHTML = `<span class="text-[10px] text-slate-300 font-bold tracking-widest animate-pulse"><i class="fa-solid fa-heart text-red-200 mr-1"></i> 浪漫章節加載中...</span>`;
-        actionArea.appendChild(hint);
-    }
-
-    // 3-4. 預覽模式下額外顯示退出預覽的按鈕
-    if (state.proposalPreviewMode) {
-        const exitBtn = document.createElement('button');
-        exitBtn.className = "mt-2 text-[11px] bg-slate-200 hover:bg-slate-300 text-slate-600 px-3 py-1.5 rounded-xl font-black shadow-sm transition mx-auto block";
-        exitBtn.innerText = "退出預覽 (安全模式)";
-        exitBtn.onclick = () => exitProposalPreview();
-        actionArea.appendChild(exitBtn);
-    }
-}
-
-// ────────────────────────────────────────────────────────
-// 🎵 求婚背景音樂：YouTube IFrame API 控制
-// （瀏覽器規範限制：有聲音的自動播放一律會被封鎖，因此一律靜音起手，
-//   並提供手動的喇叭按鈕讓使用者自行點擊開啟聲音）
-// ────────────────────────────────────────────────────────
-let ytPlayer = null;
-let ytApiReady = false;
-let pendingVideoIdToPlay = null;
-
-function extractYoutubeVideoId(url) {
-    if (!url) return null;
-    const patterns = [
-        /(?:youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{6,})/,
-        /(?:youtu\.be\/)([a-zA-Z0-9_-]{6,})/,
-        /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{6,})/,
-        /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{6,})/
-    ];
-    for (const p of patterns) {
-        const m = url.match(p);
-        if (m && m[1]) return m[1];
-    }
-    return null;
-}
-
-function loadYoutubeApiIfNeeded() {
-    if (window.YT && window.YT.Player) {
-        ytApiReady = true;
-        return;
-    }
-    if (document.getElementById('youtube-iframe-api-script')) return; // 已經在載入中，不要重複插入
-    const tag = document.createElement('script');
-    tag.id = 'youtube-iframe-api-script';
-    tag.src = 'https://www.youtube.com/iframe_api';
-    document.head.appendChild(tag);
-    window.onYouTubeIframeAPIReady = function () {
-        ytApiReady = true;
-        if (pendingVideoIdToPlay) {
-            createYoutubePlayer(pendingVideoIdToPlay);
-            pendingVideoIdToPlay = null;
-        }
-    };
-}
-
-function createYoutubePlayer(videoId) {
-    const container = document.getElementById('proposal-yt-player');
-    if (!container) return;
-    container.innerHTML = '<div id="proposal-yt-player-inner"></div>';
-    try {
-        ytPlayer = new YT.Player('proposal-yt-player-inner', {
-            height: '1',
-            width: '1',
-            videoId: videoId,
-            playerVars: { autoplay: 1, mute: 1, controls: 0, loop: 1, playlist: videoId },
-            events: {
-                onReady: (e) => {
-                    e.target.mute();
-                    e.target.playVideo();
-                    const toggleBtn = document.getElementById('proposal-music-toggle');
-                    if (toggleBtn) toggleBtn.innerHTML = '<i class="fa-solid fa-volume-xmark text-sm"></i>';
-                }
-            }
-        });
-    } catch (err) {
-        console.warn('YouTube 播放器建立失敗（不影響求婚流程本身）:', err);
-    }
-}
-
-function initProposalMusicPlayer() {
-    const toggleBtn = document.getElementById('proposal-music-toggle');
-    const videoId = extractYoutubeVideoId(state.proposalMusicUrl);
-    if (!videoId) {
-        if (toggleBtn) toggleBtn.classList.add('hidden');
-        return;
-    }
-    if (toggleBtn) toggleBtn.classList.remove('hidden');
-    loadYoutubeApiIfNeeded();
-    if (ytApiReady) {
-        createYoutubePlayer(videoId);
-    } else {
-        pendingVideoIdToPlay = videoId;
-    }
-}
-
-function stopProposalMusicPlayer() {
-    pendingVideoIdToPlay = null;
-    if (ytPlayer && typeof ytPlayer.stopVideo === 'function') {
-        try { ytPlayer.stopVideo(); } catch (e) { /* 忽略，畫面即將離開不影響使用者 */ }
-    }
-    const container = document.getElementById('proposal-yt-player');
-    if (container) container.innerHTML = '';
-    ytPlayer = null;
-}
-
-function toggleProposalMusicSound() {
-    if (!ytPlayer) return;
-    const toggleBtn = document.getElementById('proposal-music-toggle');
-    try {
-        if (ytPlayer.isMuted()) {
-            ytPlayer.unMute();
-            ytPlayer.setVolume(70);
-            if (toggleBtn) toggleBtn.innerHTML = '<i class="fa-solid fa-volume-high text-sm"></i>';
-        } else {
-            ytPlayer.mute();
-            if (toggleBtn) toggleBtn.innerHTML = '<i class="fa-solid fa-volume-xmark text-sm"></i>';
-        }
-    } catch (e) {
-        console.warn('音樂開關控制失敗:', e);
-    }
+    window.open(`proposal.html?code=${state.tripCode}&preview=true`, '_blank');
 }
 
 function toggleProposalReadyState(isChecked) {
@@ -1038,20 +785,10 @@ function verifySecurityPassword() {
 }
 
 function switchScreen(screenId) {
-    const previousScreen = state.currentScreen;
-    ['screen-login', 'screen-trip', 'screen-admin', 'screen-proposal'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+    ['screen-login', 'screen-trip', 'screen-admin'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
     document.getElementById(`screen-${screenId}`)?.classList.remove('hidden');
     state.currentScreen = screenId;
-
     if (screenId === 'trip') renderTripScreen();
-
-    if (screenId === 'proposal') {
-        renderProposalScreen();
-        initProposalMusicPlayer();
-    }
-    if (previousScreen === 'proposal' && screenId !== 'proposal') {
-        stopProposalMusicPlayer();
-    }
 }
 
 // 註冊全域函數
@@ -1077,6 +814,3 @@ window.calcPress = calcPress;
 window.calcClear = calcClear;
 window.calcBackspace = calcBackspace;
 window.calcEquals = calcEquals;
-window.endProposalAndReturn = endProposalAndReturn;
-window.exitProposalPreview = exitProposalPreview;
-window.toggleProposalMusicSound = toggleProposalMusicSound;
