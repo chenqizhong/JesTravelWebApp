@@ -16,6 +16,9 @@
 </head>
 <body class="bg-slate-50 font-sans antialiased text-slate-800">
 
+    <!-- ════════════════════════════════════════
+         畫面一：登入 / 註冊介面
+    ════════════════════════════════════════ -->
     <div id="screen-login" class="min-h-screen bg-slate-50 flex flex-col justify-center items-center px-6">
         <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-xl border border-slate-100 space-y-5 fade-in">
             <div class="flex bg-slate-100 p-1 rounded-xl">
@@ -46,31 +49,36 @@
         </div>
     </div>
 
+    <!-- ════════════════════════════════════════
+         畫面二：行程安排操作介面
+    ════════════════════════════════════════ -->
     <div id="screen-trip" class="max-w-md mx-auto bg-white min-h-screen shadow-xl flex flex-col pb-20 hidden">
         <header id="trip-header" class="bg-white border-b border-slate-100 p-4 sticky top-0 z-10 flex justify-between items-center"></header>
-        
+
         <section class="px-4 pt-4">
             <div class="w-full h-40 rounded-2xl overflow-hidden border border-slate-100 shadow-sm relative">
                 <iframe id="google-map-iframe" class="w-full h-full border-0" src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d103706.74542385155!2d139.7040502!3d35.6735398!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x60188b857628235d%3A0xc0d00f9c5c35b85a!2z5p2x5Lqs!5e0!3m2!1szh-TW!2stw!4v1710000000000!5m2!1szh-TW!2stw" allowfullscreen="" loading="lazy"></iframe>
             </div>
         </section>
-
         <section class="p-4 grid grid-cols-2 gap-3">
             <div id="weather-box"></div>
             <div id="packing-box" onclick="openPackingModal()" class="bg-slate-50 p-3 rounded-2xl border border-slate-100 cursor-pointer hover:bg-slate-100/50 transition"></div>
         </section>
-        
-        <div class="px-4 py-1 flex gap-2 overflow-x-auto no-scrollbar" id="day-tabs-container"></div>
-        
+
+        <div class="px-4 py-1 flex gap-2 overflow-x-auto no-scrollbar cursor-grab" id="day-tabs-container"></div>
+
         <main class="flex-1 p-4 space-y-4" id="schedule-container"></main>
     </div>
 
+    <!-- ════════════════════════════════════════
+         畫面三：設定維護介面 (Admin)
+    ════════════════════════════════════════ -->
     <div id="screen-admin" class="max-w-md mx-auto p-6 bg-white min-h-screen shadow-xl hidden space-y-6">
         <div class="flex justify-between items-center">
             <h2 class="text-lg font-black text-slate-800"><i class="fa-solid fa-sliders-up text-red-400"></i> 求婚顧問後台</h2>
             <button onclick="switchScreen('trip')" class="text-xs text-slate-400 underline">返回行程</button>
         </div>
-        
+
         <div class="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-3">
             <h3 class="font-bold text-xs text-slate-600">⚙️ 基礎旅團與天氣設定</h3>
             <div class="space-y-2">
@@ -83,22 +91,26 @@
                     <input type="text" id="admin-trip-title" class="w-36 px-2 py-1 border text-xs font-bold rounded-lg bg-white">
                 </div>
                 <div class="flex justify-between items-center gap-2">
-                    <span class="text-xs text-slate-500">天氣都市與氣溫：</span>
-                    <div class="flex gap-1">
-                        <input type="text" id="admin-weather-city" placeholder="都市" class="w-16 px-2 py-1 border text-xs rounded-lg bg-white">
-                        <input type="text" id="admin-weather-temp" placeholder="氣溫" class="w-16 px-2 py-1 border text-xs rounded-lg bg-white">
-                    </div>
+                    <span class="text-xs text-slate-500">天氣都市：</span>
+                    <input type="text" id="admin-weather-city" placeholder="例如：東京" class="w-24 px-2 py-1 border text-xs rounded-lg bg-white">
+                </div>
+                <div class="flex justify-between items-center gap-2">
+                    <span class="text-xs text-slate-500">備援氣溫(自動查詢失敗時顯示)：</span>
+                    <input type="text" id="admin-weather-temp" placeholder="例如：24°C" class="w-20 px-2 py-1 border text-xs rounded-lg bg-white">
                 </div>
                 <button onclick="saveAdminSettings()" class="w-full mt-2 py-2 bg-[#FF9E64] text-white text-xs font-black rounded-lg">儲存基礎設定</button>
             </div>
         </div>
-
         <div class="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-3">
             <h3 class="font-bold text-xs text-red-400">📖 動態求婚投影片設定 (資料庫綁定)</h3>
             <div class="space-y-2" id="admin-slides-container"></div>
+            <div class="pt-2 border-t border-slate-200">
+                <label class="text-[11px] font-bold text-slate-500 block mb-1">🎵 背景音樂 YouTube 連結（選填）</label>
+                <input type="text" id="admin-proposal-music-url" placeholder="https://www.youtube.com/watch?v=..." class="w-full px-2 py-1.5 border text-xs rounded-lg bg-white">
+                <p class="text-[10px] text-slate-400 mt-1">這裡先保存連結，實際播放邏輯會在「同步啟動畫面」規格確認後一併串接。</p>
+            </div>
             <button onclick="saveProposalSlides()" class="w-full py-2 bg-red-400 text-white text-xs font-black rounded-lg">儲存求婚計畫內容</button>
         </div>
-
         <div class="bg-red-50 border border-red-100 rounded-2xl p-4 space-y-4">
             <div class="flex justify-between items-center p-2.5 bg-white rounded-xl border border-red-100/70 shadow-sm">
                 <div class="flex flex-col text-left">
@@ -110,15 +122,14 @@
                     <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4  after:w-4 after:transition-all peer-checked:bg-red-500"></div>
                 </label>
             </div>
-
             <p class="text-[11px] text-red-500 font-medium text-center">⚠️ 啟用安全開關並點擊啟動後，對方的網頁才會彈出獨立求婚視窗！</p>
-            
+
             <div class="flex gap-2">
                 <button id="admin-launch-btn" onclick="triggerProposalSignal(true)" class="flex-1 py-3 bg-red-500 text-white font-black text-xs rounded-xl shadow-md transition active:scale-95">🚀 啟動求婚</button>
                 <button onclick="previewProposalWindow()" class="py-3 px-4 bg-slate-800 text-white font-bold text-xs rounded-xl transition active:scale-95 flex items-center gap-1">👁️ 獨享預覽</button>
                 <button onclick="triggerProposalSignal(false)" class="py-3 px-3 bg-slate-200 text-slate-600 font-bold text-xs rounded-xl">關閉</button>
             </div>
-            
+
             <div id="admin-sync-controller" class="pt-4 border-t border-red-100 flex justify-between items-center hidden">
                 <span class="text-xs font-bold text-red-500">主控同步翻頁：</span>
                 <div class="flex gap-1.5">
@@ -130,6 +141,9 @@
         </div>
     </div>
 
+    <!-- ════════════════════════════════════════
+         浮框：新增/編輯行程景點
+    ════════════════════════════════════════ -->
     <div id="schedule-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden p-4">
         <div class="bg-white w-full max-w-sm rounded-3xl p-6 space-y-4 shadow-2xl fade-in">
             <h3 id="schedule-modal-title" class="font-black text-base text-slate-700">✏️ 編輯行程景點</h3>
@@ -161,6 +175,9 @@
         </div>
     </div>
 
+    <!-- ════════════════════════════════════════
+         浮框：行李清單
+    ════════════════════════════════════════ -->
     <div id="packing-modal" class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center hidden">
         <div class="bg-white w-full max-w-md rounded-t-3xl p-6 space-y-4 max-h-[75vh] flex flex-col fade-in">
             <div class="flex justify-between items-center border-b pb-3">
@@ -175,6 +192,47 @@
         </div>
     </div>
 
+    <!-- ════════════════════════════════════════
+         浮框：快速計算機 (所有旅團成員可用)
+    ════════════════════════════════════════ -->
+    <div id="calculator-modal" class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center hidden">
+        <div class="bg-white w-full max-w-md rounded-t-3xl p-6 space-y-4 fade-in">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-black text-base text-slate-700">🧮 快速計算機</h3>
+                <button onclick="closeCalculatorModal()" class="text-slate-400 p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div id="calc-display" class="w-full text-right text-3xl font-black text-slate-800 bg-slate-50 rounded-xl px-4 py-4 border border-slate-100 truncate">0</div>
+            <div class="grid grid-cols-4 gap-2">
+                <button onclick="calcClear()" class="py-3 bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">C</button>
+                <button onclick="calcBackspace()" class="py-3 bg-slate-200 text-slate-700 font-bold rounded-xl text-sm"><i class="fa-solid fa-delete-left"></i></button>
+                <button onclick="calcPress('%')" class="py-3 bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">%</button>
+                <button onclick="calcPress('/')" class="py-3 bg-orange-50 text-[#FF9E64] font-bold rounded-xl text-sm">÷</button>
+
+                <button onclick="calcPress('7')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">7</button>
+                <button onclick="calcPress('8')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">8</button>
+                <button onclick="calcPress('9')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">9</button>
+                <button onclick="calcPress('*')" class="py-3 bg-orange-50 text-[#FF9E64] font-bold rounded-xl text-sm">×</button>
+
+                <button onclick="calcPress('4')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">4</button>
+                <button onclick="calcPress('5')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">5</button>
+                <button onclick="calcPress('6')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">6</button>
+                <button onclick="calcPress('-')" class="py-3 bg-orange-50 text-[#FF9E64] font-bold rounded-xl text-sm">−</button>
+
+                <button onclick="calcPress('1')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">1</button>
+                <button onclick="calcPress('2')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">2</button>
+                <button onclick="calcPress('3')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">3</button>
+                <button onclick="calcPress('+')" class="py-3 bg-orange-50 text-[#FF9E64] font-bold rounded-xl text-sm">+</button>
+
+                <button onclick="calcPress('0')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm col-span-2">0</button>
+                <button onclick="calcPress('.')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">.</button>
+                <button onclick="calcEquals()" class="py-3 bg-[#FF9E64] text-white font-black rounded-xl text-sm">=</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════
+         浮框：管理身分驗證
+    ════════════════════════════════════════ -->
     <div id="security-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center hidden p-4">
         <div class="bg-white w-full max-w-xs rounded-2xl p-5 space-y-4 shadow-2xl text-center fade-in">
             <div class="w-12 h-12 bg-orange-50 text-[#FF9E64] rounded-full flex items-center justify-center text-xl mx-auto"><i class="fa-solid fa-shield-halved"></i></div>
@@ -190,20 +248,6 @@
         </div>
     </div>
 
-    <script>
-        function toggleProposalReadyState(isChecked) {
-        const launchBtn = document.getElementById('admin-launch-btn');
-            if(!launchBtn) return;
-            launchBtn.disabled = !isChecked;
-            if(isChecked) {
-                // 當開關開啟時：解除禁用，恢復成原本紅色的啟動樣式
-                launchBtn.className = "flex-1 py-3 bg-red-500 text-white font-black text-xs rounded-xl shadow-md transition active:scale-95";
-            } else {
-                // 當開關關閉時：啟用禁用，變成灰色不可點擊樣式
-                launchBtn.className = "flex-1 py-3 bg-slate-300 text-slate-500 font-black text-xs rounded-xl shadow-none cursor-not-allowed transition-all";
-            }
-        }
-    </script>
     <script type="module" src="app.js"></script>
 </body>
 </html>
