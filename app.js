@@ -28,6 +28,8 @@ const state = {
     weatherTemp: '24°C',
     scheduleData: [],
     packingList: [],
+    expenseMembers: [],
+    expenseRecords: [],
     proposalSlides: [
         { text: '這趟旅程，看似是一起計畫的冒險...', imgUrl: '' },
         { text: '但其實，這是我這輩子最用心的佈局。', imgUrl: '' },
@@ -57,6 +59,52 @@ function escapeHtml(str) {
 
 function isLikelyYoutubeUrl(url) {
     return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(url);
+}
+
+// 使用者常常忘記打 https://，這裡自動補上，避免連結被瀏覽器當成本站內的相對路徑而打不開
+function normalizeLinkUrl(url) {
+    if (!url) return '';
+    return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+// 圖片網址即時檢查：貼上網址後試著載入一次，成功/失敗都會顯示提示文字。
+// 另外會自動把 Google Drive 的「分享連結」格式轉換成比較有機會能直接顯示的格式，
+// 但 Google Drive／HackMD 這類服務本質上是「網頁」，仍可能因為平台政策改變而失效，
+// 這裡的檢查機制就是為了讓 admin 在設定當下就能發現問題，而不是等到求婚當天才出包。
+let previewImageDebounceTimers = {};
+function previewImageUrl(inputId, hintId) {
+    clearTimeout(previewImageDebounceTimers[hintId]);
+    previewImageDebounceTimers[hintId] = setTimeout(() => doPreviewImageUrl(inputId, hintId), 400);
+}
+function doPreviewImageUrl(inputId, hintId) {
+    const input = document.getElementById(inputId);
+    const hint = document.getElementById(hintId);
+    if (!input || !hint) return;
+    let url = input.value.trim();
+    if (!url) { hint.innerText = ''; return; }
+
+    const driveMatch = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (driveMatch) {
+        url = `https://lh3.googleusercontent.com/d/${driveMatch[1]}`;
+        input.value = url;
+    }
+
+    hint.innerText = '檢查圖片連結中...';
+    hint.className = 'text-[10px] mt-1 min-h-[14px] text-slate-400';
+    const testImg = new Image();
+    testImg.onload = () => {
+        if (input.value.trim() === url) {
+            hint.innerText = '✅ 這個網址可以正常顯示圖片';
+            hint.className = 'text-[10px] mt-1 min-h-[14px] text-green-500 font-bold';
+        }
+    };
+    testImg.onerror = () => {
+        if (input.value.trim() === url) {
+            hint.innerText = '❌ 這個網址無法顯示圖片，建議改用 imgur.com 或 postimages.org 上傳後取得的直連圖片網址';
+            hint.className = 'text-[10px] mt-1 min-h-[14px] text-red-400 font-bold';
+        }
+    };
+    testImg.src = url;
 }
 
 // ────────────────────────────────────────────────────────
@@ -103,12 +151,12 @@ function switchLoginTab(mode) {
     if (mode === 'register') {
         loginBtn.className = "flex-1 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-600 transition-all";
         regBtn.className = "flex-1 py-2 text-xs font-black rounded-lg bg-white text-slate-700 shadow-sm transition-all";
-        title.innerText = "建立新旅團或加入密謀 ✨";
+        title.innerHTML = "建立新旅團或加入密謀<img class=\"inline-block h-[2.2em] align-middle ml-1\" src=\"LOGO.gif\" alt=\"海豹\">";
         submitBtn.innerText = "註冊旅團帳號";
     } else {
         loginBtn.className = "flex-1 py-2 text-xs font-black rounded-lg bg-white text-slate-700 shadow-sm transition-all";
         regBtn.className = "flex-1 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-600 transition-all";
-        title.innerText = "歡迎回到旅遊小助手 👋";
+        title.innerHTML = "沒有腳怎麼去旅遊<img class=\"inline-block h-[2.2em] align-middle ml-1\" src=\"LOGO.gif\" alt=\"海豹\">";
         submitBtn.innerText = "確認登入";
     }
 }
@@ -202,6 +250,22 @@ function startRealtimeSync() {
             renderPackingModalList();
         }
         renderTripScreen();
+    });
+
+    // 監聽費用分攤：成員清單
+    onValue(ref(db, `trips/${state.tripCode}/expenseMembers`), (snapshot) => {
+        state.expenseMembers = snapshot.exists() ? Object.values(snapshot.val()) : [];
+        if (!document.getElementById('expense-modal').classList.contains('hidden')) {
+            renderExpenseModal();
+        }
+    });
+
+    // 監聽費用分攤：花費紀錄
+    onValue(ref(db, `trips/${state.tripCode}/expenseRecords`), (snapshot) => {
+        state.expenseRecords = snapshot.exists() ? Object.values(snapshot.val()) : [];
+        if (!document.getElementById('expense-modal').classList.contains('hidden')) {
+            renderExpenseModal();
+        }
     });
 
     // 監聽求婚資料（Slides、音樂、控制訊號一起監聽，確保資料一致性）
@@ -341,6 +405,24 @@ async function updateWeatherDisplay() {
 // ────────────────────────────────────────────────────────
 // 🖥️ UI 渲染與拖曳控制 (SortableJS 接入)
 // ────────────────────────────────────────────────────────
+let scheduleSortableInstance = null;
+let isScheduleReorderMode = false;
+
+function toggleScheduleReorderMode() {
+    isScheduleReorderMode = !isScheduleReorderMode;
+    renderTripScreen();
+}
+
+let lastMapCity = null;
+function updateMapDisplay() {
+    const iframe = document.getElementById('google-map-iframe');
+    if (!iframe) return;
+    const city = (state.weatherCity || '').trim();
+    if (!city || lastMapCity === city) return;
+    lastMapCity = city;
+    iframe.src = `https://www.google.com/maps?q=${encodeURIComponent(city)}&output=embed`;
+}
+
 function renderTripScreen() {
     const header = document.getElementById('trip-header');
     header.innerHTML = `
@@ -349,6 +431,7 @@ function renderTripScreen() {
             <h1 class="text-xl font-black text-[#FF9E64] mt-1">${escapeHtml(state.tripTitle)} ✈️</h1>
         </div>
         <div class="flex gap-2">
+            <button onclick="openExpenseModal()" class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-500 hover:bg-slate-100 transition" title="費用分攤"><i class="fa-solid fa-sack-dollar text-xs"></i></button>
             <button onclick="openCalculatorModal()" class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-500 hover:bg-slate-100 transition" title="計算機"><i class="fa-solid fa-calculator text-xs"></i></button>
             ${state.isPlanner ? `
                 <button onclick="triggerSecureAction('admin')" class="w-8 h-8 rounded-full bg-orange-50/50 flex items-center justify-center text-[#FF9E64] hover:bg-orange-100/50 transition"><i class="fa-solid fa-gear text-xs"></i></button>
@@ -357,6 +440,7 @@ function renderTripScreen() {
     `;
 
     updateWeatherDisplay();
+    updateMapDisplay();
 
     const checkedCount = state.packingList.filter(i => i.checked).length;
     document.getElementById('packing-box').innerHTML = `
@@ -375,6 +459,16 @@ function renderTripScreen() {
         tabsContainer.appendChild(btn);
     }
 
+    const reorderBtn = document.getElementById('schedule-reorder-toggle-btn');
+    if (reorderBtn) {
+        reorderBtn.innerHTML = isScheduleReorderMode
+            ? '<i class="fa-solid fa-check"></i> 完成排序'
+            : '<i class="fa-solid fa-arrows-up-down"></i> 排序';
+        reorderBtn.className = isScheduleReorderMode
+            ? "text-[11px] font-bold text-white px-3 py-1 rounded-lg bg-[#FF9E64] flex items-center gap-1"
+            : "text-[11px] font-bold text-slate-400 px-3 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1";
+    }
+
     const container = document.getElementById('schedule-container');
     container.innerHTML = '';
     const currentItems = state.scheduleData.filter(item => item.day === state.selectedDay);
@@ -384,49 +478,61 @@ function renderTripScreen() {
         currentItems.forEach((item) => {
             const card = document.createElement('div');
             card.setAttribute('data-id', item.id);
-            card.className = `bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex flex-col ${item.checked ? 'bg-slate-50/70 border-slate-200/50 shadow-none opacity-60' : ''}`;
+            card.className = `bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex flex-col ${item.checked ? 'bg-slate-50/70 border-slate-200/50 shadow-none opacity-60' : ''} ${isScheduleReorderMode ? 'reorder-jiggle' : ''}`;
             card.innerHTML = `
                 <div class="flex justify-between items-start">
                     <div class="flex items-center gap-3 flex-1">
-                        <button onclick="toggleScheduleCheck('${item.id}')" class="text-base shrink-0">
+                        <button onclick="toggleScheduleCheck('${item.id}')" class="text-base shrink-0" ${isScheduleReorderMode ? 'disabled' : ''}>
                             <i class="${item.checked ? 'fa-solid fa-circle-check text-[#FF9E64]' : 'fa-regular fa-circle text-slate-300'}"></i>
                         </button>
                         <div class="flex items-center gap-2">
-                            <span class="bg-orange-50 text-[#FF9E64] text-[10px] font-black px-2 py-0.5 rounded-md cursor-move"><i class="fa-solid fa-bars text-[9px] mr-1 opacity-50"></i>${escapeHtml(item.time)}</span>
+                            <span class="bg-orange-50 text-[#FF9E64] text-[10px] font-black px-2 py-0.5 rounded-md">${escapeHtml(item.time)}</span>
                             <h3 class="font-bold text-slate-800 text-sm ${item.checked ? 'line-through text-slate-400 font-normal' : ''}">${escapeHtml(item.title)}</h3>
                         </div>
                     </div>
                     <div class="flex items-center gap-1.5 shrink-0">
-                        <button class="map-btn text-slate-400 hover:text-blue-500 text-xs p-1" data-title="${escapeHtml(item.title)}" title="在 Google 地圖上查看"><i class="fa-solid fa-map-location-dot"></i></button>
-                        <button onclick="openScheduleModal('${item.id}')" class="text-slate-400 hover:text-[#FF9E64] text-xs p-1"><i class="fa-solid fa-pen"></i></button>
-                        <button onclick="deleteSchedule('${item.id}')" class="text-slate-400 hover:text-red-400 text-xs p-1"><i class="fa-solid fa-trash"></i></button>
+                        ${isScheduleReorderMode ? '<i class="fa-solid fa-arrows-up-down text-slate-300 text-xs px-1"></i>' : `
+                            <button class="map-btn text-slate-400 hover:text-blue-500 text-xs p-1" data-title="${escapeHtml(item.title)}" title="在 Google 地圖上查看"><i class="fa-solid fa-map-location-dot"></i></button>
+                            <button onclick="openScheduleModal('${item.id}')" class="text-slate-400 hover:text-[#FF9E64] text-xs p-1"><i class="fa-solid fa-pen"></i></button>
+                            <button onclick="deleteSchedule('${item.id}')" class="text-slate-400 hover:text-red-400 text-xs p-1"><i class="fa-solid fa-trash"></i></button>
+                        `}
                     </div>
                 </div>
                 ${item.imgUrl ? `<img src="${escapeHtml(item.imgUrl)}" class="w-full h-24 object-cover rounded-xl mt-2 shadow-sm">` : ''}
                 ${item.desc ? `<p class="text-xs text-slate-500 pl-7 mt-1.5 whitespace-pre-line">${escapeHtml(item.desc)}</p>` : ''}
+                ${(item.link && !isScheduleReorderMode) ? `<a href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer" class="mt-2 inline-flex items-center gap-1.5 self-start bg-orange-50 text-[#FF9E64] text-[11px] font-bold px-3 py-1.5 rounded-full hover:bg-orange-100/70 transition"><i class="fa-solid fa-arrow-up-right-from-square"></i> 開啟參考連結</a>` : ''}
             `;
             container.appendChild(card);
         });
-        Sortable.create(container, {
-            animation: 200,
-            handle: '.cursor-move',
-            delay: 150,             // 手指按住 150ms 才視為拖曳，短於此視為一般點擊/捲動
-            delayOnTouchOnly: true, // 只在觸控裝置套用延遲判定，滑鼠操作維持原本手感
-            touchStartThreshold: 5,
-            onEnd: function () {
-                const updatedIds = Array.from(container.children).map(child => child.getAttribute('data-id')).filter(id => id);
-                updatedIds.forEach((id, index) => {
-                    set(ref(db, `trips/${state.tripCode}/scheduleData/${id}/sortOrder`), index);
-                });
-            }
-        });
+
+        // Sortable 只建立「一次」實例，之後只切換 disabled 狀態 —
+        // 這是修正手機拖曳排序失效的關鍵：先前每次重新渲染都會多建立一個新的 Sortable 實例，
+        // 疊加起來的多組觸控事件監聽器彼此衝突，導致手機上完全無法觸發拖曳。
+        if (!scheduleSortableInstance) {
+            scheduleSortableInstance = Sortable.create(container, {
+                animation: 200,
+                forceFallback: true,   // 統一用模擬拖曳事件，避免不同手機瀏覽器的原生拖曳支援不一致
+                fallbackTolerance: 3,
+                disabled: !isScheduleReorderMode,
+                onEnd: function () {
+                    const updatedIds = Array.from(container.children).map(child => child.getAttribute('data-id')).filter(id => id);
+                    updatedIds.forEach((id, index) => {
+                        set(ref(db, `trips/${state.tripCode}/scheduleData/${id}/sortOrder`), index);
+                    });
+                }
+            });
+        } else {
+            scheduleSortableInstance.option('disabled', !isScheduleReorderMode);
+        }
     }
 
-    const addBtn = document.createElement('button');
-    addBtn.className = "w-full py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-400 mt-2";
-    addBtn.innerText = "+ 新增此日行程景點";
-    addBtn.onclick = () => openScheduleModal(null);
-    container.appendChild(addBtn);
+    if (!isScheduleReorderMode) {
+        const addBtn = document.createElement('button');
+        addBtn.className = "w-full py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-400 mt-2";
+        addBtn.innerText = "+ 新增此日行程景點";
+        addBtn.onclick = () => openScheduleModal(null);
+        container.appendChild(addBtn);
+    }
 }
 
 // 景點卡片上的地圖按鈕：用事件委派方式綁定，避免景點名稱含特殊符號時破壞 HTML
@@ -472,9 +578,6 @@ function initDayTabsDragScroll() {
     });
 }
 
-// ────────────────────────────────────────────────────────
-// 💾 行程表單儲存
-// ────────────────────────────────────────────────────────
 function openScheduleModal(id = null) {
     document.getElementById('schedule-modal').classList.remove('hidden');
     if (id) {
@@ -484,6 +587,7 @@ function openScheduleModal(id = null) {
         document.getElementById('form-schedule-name').value = item.title;
         document.getElementById('form-schedule-desc').value = item.desc || '';
         document.getElementById('form-schedule-img').value = item.imgUrl || '';
+        document.getElementById('form-schedule-link').value = item.link || '';
         document.getElementById('schedule-modal-title').innerText = "✏️ 編輯行程景點";
     } else {
         document.getElementById('form-schedule-id').value = '';
@@ -491,6 +595,7 @@ function openScheduleModal(id = null) {
         document.getElementById('form-schedule-name').value = '';
         document.getElementById('form-schedule-desc').value = '';
         document.getElementById('form-schedule-img').value = '';
+        document.getElementById('form-schedule-link').value = '';
         document.getElementById('schedule-modal-title').innerText = "✨ 新增行程景點";
     }
 }
@@ -502,6 +607,7 @@ function saveScheduleForm() {
     const title = document.getElementById('form-schedule-name').value.trim();
     const desc = document.getElementById('form-schedule-desc').value.trim();
     const imgUrl = document.getElementById('form-schedule-img').value.trim();
+    const link = normalizeLinkUrl(document.getElementById('form-schedule-link').value.trim());
     if (!title) return alert('請填寫景點名稱！');
     const itemId = id ? id : "item_" + Date.now();
     const existingItem = state.scheduleData.find(s => s.id === id);
@@ -512,6 +618,7 @@ function saveScheduleForm() {
         title,
         desc,
         imgUrl,
+        link,
         checked: existingItem ? existingItem.checked : false,
         sortOrder: existingItem ? (existingItem.sortOrder || 0) : state.scheduleData.length
     }).catch((err) => {
@@ -529,7 +636,19 @@ function toggleScheduleCheck(id) {
 }
 
 // 🎒 行李清單操作
-function openPackingModal() { document.getElementById('packing-modal').classList.remove('hidden'); renderPackingModalList(); }
+let packingSortableInstance = null;
+let isPackingReorderMode = false;
+
+function togglePackingReorderMode() {
+    isPackingReorderMode = !isPackingReorderMode;
+    renderPackingModalList();
+}
+
+function openPackingModal() {
+    isPackingReorderMode = false;
+    document.getElementById('packing-modal').classList.remove('hidden');
+    renderPackingModalList();
+}
 function closePackingModal() { document.getElementById('packing-modal').classList.add('hidden'); }
 function addPackingItem() {
     const input = document.getElementById('new-packing-item');
@@ -548,35 +667,49 @@ function deletePackingItem(id) {
 function renderPackingModalList() {
     const list = document.getElementById('modal-items-list');
     list.innerHTML = '';
+
+    const reorderBtn = document.getElementById('packing-reorder-toggle-btn');
+    if (reorderBtn) {
+        reorderBtn.innerHTML = isPackingReorderMode
+            ? '<i class="fa-solid fa-check"></i> 完成'
+            : '<i class="fa-solid fa-arrows-up-down"></i> 排序';
+        reorderBtn.className = isPackingReorderMode
+            ? "text-[11px] font-bold text-white px-2.5 py-1 rounded-lg bg-[#FF9E64] flex items-center gap-1"
+            : "text-[11px] font-bold text-slate-400 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1";
+    }
+
     state.packingList.forEach(item => {
         const div = document.createElement('div');
         div.setAttribute('data-id', item.id);
-        div.className = "flex justify-between items-center p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold";
+        div.className = `flex justify-between items-center p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold ${isPackingReorderMode ? 'reorder-jiggle' : ''}`;
         div.innerHTML = `
             <div class="flex items-center gap-2.5 text-left flex-1">
-                <button onclick="togglePackingCheck('${item.id}', ${item.checked})">
+                <button onclick="togglePackingCheck('${item.id}', ${item.checked})" ${isPackingReorderMode ? 'disabled' : ''}>
                     <i class="${item.checked ? 'fa-solid fa-square-check text-[#FF9E64]' : 'fa-regular fa-square text-slate-300'} text-base"></i>
                 </button>
-                <span class="pack-drag-handle cursor-move text-slate-300 mr-1"><i class="fa-solid fa-bars text-[10px]"></i></span>
                 <span class="${item.checked ? 'line-through text-slate-400 font-normal' : 'text-slate-700'}">${escapeHtml(item.item)}</span>
             </div>
-            <button onclick="deletePackingItem('${item.id}')" class="text-slate-300 hover:text-red-400 px-1"><i class="fa-solid fa-trash-can"></i></button>
+            ${isPackingReorderMode ? '<i class="fa-solid fa-arrows-up-down text-slate-300 text-xs px-1"></i>' : `<button onclick="deletePackingItem('${item.id}')" class="text-slate-300 hover:text-red-400 px-1"><i class="fa-solid fa-trash-can"></i></button>`}
         `;
         list.appendChild(div);
     });
-    Sortable.create(list, {
-        animation: 200,
-        handle: '.pack-drag-handle',
-        delay: 150,
-        delayOnTouchOnly: true,
-        touchStartThreshold: 5,
-        onEnd: function() {
-            const updatedIds = Array.from(list.children).map(c => c.getAttribute('data-id'));
-            updatedIds.forEach((id, idx) => {
-                set(ref(db, `trips/${state.tripCode}/packingList/${id}/sortOrder`), idx);
-            });
-        }
-    });
+
+    if (!packingSortableInstance) {
+        packingSortableInstance = Sortable.create(list, {
+            animation: 200,
+            forceFallback: true,
+            fallbackTolerance: 3,
+            disabled: !isPackingReorderMode,
+            onEnd: function() {
+                const updatedIds = Array.from(list.children).map(c => c.getAttribute('data-id'));
+                updatedIds.forEach((id, idx) => {
+                    set(ref(db, `trips/${state.tripCode}/packingList/${id}/sortOrder`), idx);
+                });
+            }
+        });
+    } else {
+        packingSortableInstance.option('disabled', !isPackingReorderMode);
+    }
 }
 
 // ────────────────────────────────────────────────────────
@@ -629,8 +762,295 @@ function calcEquals() {
 }
 
 // ────────────────────────────────────────────────────────
-// 📖 求婚顧問後台：動態投影片渲染與儲存（支援動態增刪）
+// 💰 費用分攤功能（所有旅團成員可用，資料即時同步）
 // ────────────────────────────────────────────────────────
+function openExpenseModal() {
+    document.getElementById('expense-modal').classList.remove('hidden');
+    resetExpenseForm();
+    renderExpenseModal();
+}
+function closeExpenseModal() {
+    document.getElementById('expense-modal').classList.add('hidden');
+}
+
+function addExpenseMember() {
+    const input = document.getElementById('new-expense-member');
+    const name = input.value.trim();
+    if (!name) return;
+    if (state.expenseMembers.some(m => m.name === name)) {
+        alert('⚠️ 已經有同名的成員了，換個名字或直接使用現有成員吧！');
+        return;
+    }
+    const memberId = "member_" + Date.now();
+    set(ref(db, `trips/${state.tripCode}/expenseMembers/${memberId}`), {
+        id: memberId, name, sortOrder: state.expenseMembers.length
+    }).catch((err) => {
+        console.error('新增成員失敗:', err);
+        alert('❌ 新增失敗，請檢查網路連線後再試一次！');
+    });
+    input.value = '';
+}
+
+function deleteExpenseMember(memberId) {
+    // 防呆：這位成員如果還牽涉到任何一筆花費紀錄，不能直接刪除，避免結算金額算錯或出現「查無此人」的孤兒資料
+    const isUsed = state.expenseRecords.some(e => e.payerId === memberId || (e.participantIds || []).includes(memberId));
+    if (isUsed) {
+        alert('⚠️ 這位成員還有相關的花費紀錄，請先處理(刪除或修改)相關花費後，才能刪除這位成員。');
+        return;
+    }
+    if (confirm('確定要刪除這位成員嗎？')) {
+        set(ref(db, `trips/${state.tripCode}/expenseMembers/${memberId}`), null);
+    }
+}
+
+function saveExpenseRecordForm() {
+    const id = document.getElementById('form-expense-id').value;
+    const desc = document.getElementById('form-expense-desc').value.trim();
+    const amount = parseFloat(document.getElementById('form-expense-amount').value);
+    const currency = (document.getElementById('form-expense-currency').value.trim() || 'TWD').toUpperCase();
+    const payerId = document.getElementById('form-expense-payer').value;
+    const participantIds = Array.from(document.querySelectorAll('.expense-participant-checkbox:checked')).map(el => el.value);
+
+    if (!desc) return alert('請輸入花費項目名稱！');
+    if (!amount || amount <= 0 || Number.isNaN(amount)) return alert('請輸入正確的金額（需大於 0）！');
+    if (!payerId) return alert('請選擇是誰先付的錢！');
+    if (participantIds.length === 0) return alert('請至少勾選一位分攤成員！');
+
+    const expenseId = id ? id : "expense_" + Date.now();
+    const existing = state.expenseRecords.find(e => e.id === id);
+    set(ref(db, `trips/${state.tripCode}/expenseRecords/${expenseId}`), {
+        id: expenseId,
+        description: desc,
+        amount,
+        currency,
+        payerId,
+        participantIds,
+        createdAt: existing ? existing.createdAt : Date.now()
+    }).then(() => {
+        resetExpenseForm();
+    }).catch((err) => {
+        console.error('儲存花費失敗:', err);
+        alert('❌ 儲存失敗，請檢查網路連線後再試一次！');
+    });
+}
+
+function resetExpenseForm() {
+    const idInput = document.getElementById('form-expense-id');
+    if (!idInput) return; // 尚未開啟過費用分攤視窗，不用處理
+    idInput.value = '';
+    document.getElementById('form-expense-desc').value = '';
+    document.getElementById('form-expense-amount').value = '';
+    document.getElementById('form-expense-currency').value = '';
+    document.getElementById('form-expense-payer').value = '';
+    document.getElementById('expense-form-title').innerText = '新增一筆花費';
+    const participantsBox = document.getElementById('form-expense-participants');
+    if (participantsBox) participantsBox.dataset.rendered = 'false'; // 下次渲染恢復「全員均分」預設勾選
+    renderExpenseParticipantForm();
+}
+
+function editExpenseRecord(id) {
+    const item = state.expenseRecords.find(e => e.id === id);
+    if (!item) return;
+    document.getElementById('form-expense-id').value = item.id;
+    document.getElementById('form-expense-desc').value = item.description;
+    document.getElementById('form-expense-amount').value = item.amount;
+    document.getElementById('form-expense-currency').value = item.currency;
+    document.getElementById('expense-form-title').innerText = '編輯花費紀錄';
+    renderExpensePayerOptions();
+    document.getElementById('form-expense-payer').value = item.payerId;
+    const participantsBox = document.getElementById('form-expense-participants');
+    if (participantsBox) participantsBox.dataset.rendered = 'true'; // 標記為已渲染，避免下面重繪又蓋回全選
+    renderExpenseParticipantForm();
+    document.querySelectorAll('.expense-participant-checkbox').forEach(cb => {
+        cb.checked = (item.participantIds || []).includes(cb.value);
+    });
+    // 捲動到表單位置，方便使用者看到正在編輯的內容
+    document.getElementById('form-expense-desc').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function deleteExpenseRecord(id) {
+    if (confirm('確定要刪除這筆花費紀錄嗎？')) {
+        set(ref(db, `trips/${state.tripCode}/expenseRecords/${id}`), null);
+    }
+}
+
+function renderExpenseMembersChips() {
+    const list = document.getElementById('expense-members-list');
+    if (!list) return;
+    list.innerHTML = '';
+    if (state.expenseMembers.length === 0) {
+        list.innerHTML = '<span class="text-[11px] text-slate-300">尚未新增成員，請先在下方新增</span>';
+        return;
+    }
+    state.expenseMembers.forEach(m => {
+        const chip = document.createElement('span');
+        chip.className = "inline-flex items-center gap-1.5 bg-orange-50 text-[#FF9E64] text-xs font-bold px-2.5 py-1 rounded-full";
+        chip.innerHTML = `${escapeHtml(m.name)} <button title="刪除成員" class="text-orange-300 hover:text-red-400"><i class="fa-solid fa-xmark"></i></button>`;
+        chip.querySelector('button').onclick = () => deleteExpenseMember(m.id);
+        list.appendChild(chip);
+    });
+}
+
+function renderExpensePayerOptions() {
+    const payerSelect = document.getElementById('form-expense-payer');
+    if (!payerSelect) return;
+    const currentVal = payerSelect.value;
+    payerSelect.innerHTML = '<option value="">請選擇付款人</option>' +
+        state.expenseMembers.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+    if (currentVal && state.expenseMembers.some(m => m.id === currentVal)) {
+        payerSelect.value = currentVal;
+    }
+}
+
+function renderExpenseParticipantForm() {
+    const box = document.getElementById('form-expense-participants');
+    if (!box) return;
+    // 保留使用者目前已勾選的項目，避免每次重繪(例如新增成員後)把剛勾好的選項清空
+    const checkedIds = new Set(Array.from(box.querySelectorAll('.expense-participant-checkbox:checked')).map(el => el.value));
+    const isFirstRender = box.dataset.rendered !== 'true';
+    box.innerHTML = state.expenseMembers.map(m => `
+        <label class="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-full px-2.5 py-1 text-[11px] cursor-pointer">
+            <input type="checkbox" value="${m.id}" class="expense-participant-checkbox" ${(isFirstRender || checkedIds.has(m.id)) ? 'checked' : ''}>
+            ${escapeHtml(m.name)}
+        </label>
+    `).join('') || '<span class="text-[11px] text-slate-300">請先新增成員</span>';
+    box.dataset.rendered = 'true';
+}
+
+function renderExpenseRecordsList() {
+    const list = document.getElementById('expense-records-list');
+    if (!list) return;
+    if (state.expenseRecords.length === 0) {
+        list.innerHTML = '<p class="text-[11px] text-slate-300 text-center py-3">尚未有任何花費紀錄</p>';
+        return;
+    }
+    const nameMap = {};
+    state.expenseMembers.forEach(m => nameMap[m.id] = m.name);
+
+    list.innerHTML = '';
+    state.expenseRecords.forEach(exp => {
+        const payerName = nameMap[exp.payerId] || '(已刪除的成員)';
+        const participantNames = (exp.participantIds || []).map(id => nameMap[id] || '(已刪除的成員)').join('、');
+        const div = document.createElement('div');
+        div.className = "bg-white border border-slate-100 rounded-xl p-2.5 text-xs shadow-sm";
+        div.innerHTML = `
+            <div class="flex justify-between items-start gap-2">
+                <div class="flex-1 min-w-0">
+                    <p class="font-bold text-slate-700">${escapeHtml(exp.description)}</p>
+                    <p class="text-slate-400 mt-0.5">${escapeHtml(payerName)} 付了 <span class="font-black text-[#FF9E64]">${escapeHtml(String(exp.amount))} ${escapeHtml(exp.currency)}</span></p>
+                    <p class="text-slate-300 text-[10px] mt-0.5 truncate">均分：${escapeHtml(participantNames)}</p>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                    <button onclick="editExpenseRecord('${exp.id}')" class="text-slate-400 hover:text-[#FF9E64] p-1"><i class="fa-solid fa-pen"></i></button>
+                    <button onclick="deleteExpenseRecord('${exp.id}')" class="text-slate-400 hover:text-red-400 p-1"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            </div>
+        `;
+        list.appendChild(div);
+    });
+}
+
+// 依幣別分開結算(不做匯率換算)，用貪婪演算法算出「最少轉帳次數」的還款建議
+function computeExpenseSettlements() {
+    const currencies = [...new Set(state.expenseRecords.map(e => e.currency))];
+    const nameMap = {};
+    state.expenseMembers.forEach(m => nameMap[m.id] = m.name);
+
+    return currencies.map(currency => {
+        const balances = {};
+        state.expenseMembers.forEach(m => balances[m.id] = 0);
+
+        state.expenseRecords.filter(e => e.currency === currency).forEach(exp => {
+            const participants = exp.participantIds || [];
+            if (participants.length === 0) return;
+            const share = exp.amount / participants.length;
+            if (balances[exp.payerId] === undefined) balances[exp.payerId] = 0;
+            balances[exp.payerId] += exp.amount;
+            participants.forEach(pid => {
+                if (balances[pid] === undefined) balances[pid] = 0;
+                balances[pid] -= share;
+            });
+        });
+
+        const creditors = [];
+        const debtors = [];
+        Object.keys(balances).forEach(id => {
+            const amt = Math.round(balances[id] * 100) / 100;
+            if (amt > 0.01) creditors.push({ id, amt });
+            else if (amt < -0.01) debtors.push({ id, amt: -amt });
+        });
+
+        const settlements = [];
+        let i = 0, j = 0;
+        while (i < debtors.length && j < creditors.length) {
+            const pay = Math.min(debtors[i].amt, creditors[j].amt);
+            settlements.push({
+                from: nameMap[debtors[i].id] || '(已刪除的成員)',
+                to: nameMap[creditors[j].id] || '(已刪除的成員)',
+                amount: Math.round(pay * 100) / 100
+            });
+            debtors[i].amt -= pay;
+            creditors[j].amt -= pay;
+            if (debtors[i].amt <= 0.01) i++;
+            if (creditors[j].amt <= 0.01) j++;
+        }
+        return { currency, settlements };
+    });
+}
+
+function renderExpenseSettlement() {
+    const container = document.getElementById('expense-settlement-result');
+    if (!container) return;
+    if (state.expenseRecords.length === 0 || state.expenseMembers.length === 0) {
+        container.innerHTML = '<p class="text-[11px] text-slate-300 text-center py-3">尚無資料可結算</p>';
+        return;
+    }
+    const results = computeExpenseSettlements();
+    container.innerHTML = '';
+    results.forEach(({ currency, settlements }) => {
+        const block = document.createElement('div');
+        block.className = "bg-slate-50 border border-slate-100 rounded-xl p-2.5";
+        if (settlements.length === 0) {
+            block.innerHTML = `<p class="text-xs font-black text-slate-500 mb-1">${escapeHtml(currency)}</p><p class="text-[11px] text-green-500 font-bold">✅ 這個幣別目前帳務已平衡</p>`;
+        } else {
+            block.innerHTML = `<p class="text-xs font-black text-slate-500 mb-1.5">${escapeHtml(currency)}</p>` +
+                settlements.map(s => `<p class="text-[11px] text-slate-600 py-0.5">👉 <span class="font-bold">${escapeHtml(s.from)}</span> 應付給 <span class="font-bold text-[#FF9E64]">${escapeHtml(s.to)}</span> <span class="font-black">${s.amount}</span> ${escapeHtml(currency)}</p>`).join('');
+        }
+        container.appendChild(block);
+    });
+}
+
+function renderExpenseModal() {
+    renderExpenseMembersChips();
+    renderExpensePayerOptions();
+    renderExpenseParticipantForm();
+    renderExpenseRecordsList();
+    renderExpenseSettlement();
+}
+
+// ────────────────────────────────────────────────────────
+// 📖 求婚顧問後台：動態投影片渲染與儲存（支援動態增刪、手風琴收合、自動/手動翻頁設定）
+// ────────────────────────────────────────────────────────
+let expandedSlideIndexes = new Set([0]);
+
+function toggleSlideAccordion(idx) {
+    syncLocalSlidesState(); // 收合前先把目前輸入框內容同步回 state，避免收合時遺失還沒儲存的編輯內容
+    if (expandedSlideIndexes.has(idx)) expandedSlideIndexes.delete(idx);
+    else expandedSlideIndexes.add(idx);
+    renderAdminSlides();
+}
+
+function onAdvanceModeChange(idx) {
+    const secondsInput = document.getElementById(`admin-slide-seconds-${idx}`);
+    const radios = document.getElementsByName(`advance-mode-${idx}`);
+    let mode = 'manual';
+    radios.forEach(r => { if (r.checked) mode = r.value; });
+    if (secondsInput) {
+        if (mode === 'auto') secondsInput.classList.remove('hidden');
+        else secondsInput.classList.add('hidden');
+    }
+}
+
 function renderAdminSlides() {
     const container = document.getElementById('admin-slides-container');
     if (!container) return;
@@ -638,24 +1058,42 @@ function renderAdminSlides() {
 
     state.proposalSlides.forEach((slide, idx) => {
         const isLast = (idx === state.proposalSlides.length - 1);
+        const isExpanded = expandedSlideIndexes.has(idx);
         const div = document.createElement('div');
-        div.className = "p-3 bg-white border border-slate-100 rounded-xl space-y-2 text-xs relative";
+        div.className = "bg-white border border-slate-100 rounded-xl text-xs overflow-hidden";
         div.innerHTML = `
-            <div class="font-black text-slate-400 flex justify-between items-center">
-                <span>頁面 ${idx + 1}</span>
-                <div class="flex items-center gap-2">
-                    ${isLast ? '<span class="text-red-400 font-bold">🏁 最終決策頁</span>' : `
-                        <button onclick="deleteProposalSlide(${idx})" class="text-slate-400 hover:text-red-500 font-bold px-1 py-0.5 border border-slate-200 rounded">
-                            <i class="fa-solid fa-trash-can mr-1"></i>刪除
-                        </button>
-                    `}
+            <button type="button" onclick="toggleSlideAccordion(${idx})" class="w-full flex justify-between items-center p-3 font-black text-slate-500 text-left">
+                <span>${isLast ? '🏁 ' : ''}頁面 ${idx + 1}${isLast ? '（最終決策頁）' : ''}</span>
+                <i class="fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-slate-300"></i>
+            </button>
+            <div class="${isExpanded ? '' : 'hidden'} p-3 pt-0 space-y-2">
+                <input type="text" value="${escapeHtml(slide.text || '')}" placeholder="請輸入本頁告白文字" class="w-full px-2 py-1 border rounded-md slide-text-input">
+                <div>
+                    <input type="text" id="admin-slide-img-${idx}" value="${escapeHtml(slide.imgUrl || '')}" placeholder="請輸入本頁背景/照片 URL" class="w-full px-2 py-1 border rounded-md slide-img-input text-[11px] font-mono" oninput="previewImageUrl('admin-slide-img-${idx}', 'admin-slide-img-hint-${idx}')">
+                    <p id="admin-slide-img-hint-${idx}" class="text-[10px] mt-1 min-h-[14px]"></p>
                 </div>
+                ${isLast ? `
+                    <input type="text" value="${escapeHtml(slide.choices || '我願意 💍, 超級願意 ❤️')}" placeholder="按鈕選項 (用逗號隔開)" class="w-full px-2 py-1 border rounded-md slide-choices-input">
+                ` : `
+                    <div class="pt-2 border-t border-slate-100">
+                        <label class="text-[10px] font-bold text-slate-400 block mb-1">這一頁怎麼翻到下一頁？</label>
+                        <div class="flex items-center flex-wrap gap-x-3 gap-y-1 text-[11px]">
+                            <label class="flex items-center gap-1">
+                                <input type="radio" name="advance-mode-${idx}" value="manual" class="slide-advance-mode-input" ${(!slide.advanceMode || slide.advanceMode === 'manual') ? 'checked' : ''} onchange="onAdvanceModeChange(${idx})"> 手動點擊
+                            </label>
+                            <label class="flex items-center gap-1">
+                                <input type="radio" name="advance-mode-${idx}" value="auto" class="slide-advance-mode-input" ${slide.advanceMode === 'auto' ? 'checked' : ''} onchange="onAdvanceModeChange(${idx})"> 定時自動
+                            </label>
+                            <span class="flex items-center gap-1">
+                                <input type="number" min="1" max="60" value="${slide.autoSeconds || 4}" id="admin-slide-seconds-${idx}" class="slide-auto-seconds-input w-14 px-1.5 py-1 border rounded-md ${slide.advanceMode === 'auto' ? '' : 'hidden'}"> 秒
+                            </span>
+                        </div>
+                    </div>
+                    <button onclick="deleteProposalSlide(${idx})" class="text-slate-400 hover:text-red-500 font-bold px-1 py-0.5 border border-slate-200 rounded">
+                        <i class="fa-solid fa-trash-can mr-1"></i>刪除此頁
+                    </button>
+                `}
             </div>
-            <input type="text" value="${escapeHtml(slide.text || '')}" placeholder="請輸入本頁告白文字" class="w-full px-2 py-1 border rounded-md slide-text-input">
-            <input type="text" value="${escapeHtml(slide.imgUrl || '')}" placeholder="請輸入本頁背景/照片 URL" class="w-full px-2 py-1 border rounded-md slide-img-input text-[11px] font-mono">
-            ${isLast ? `
-                <input type="text" value="${escapeHtml(slide.choices || '我願意 💍, 超級願意 ❤️')}" placeholder="按鈕選項 (用逗號隔開)" class="w-full px-2 py-1 border rounded-md slide-choices-input">
-            ` : ''}
         `;
         container.appendChild(div);
     });
@@ -671,11 +1109,13 @@ function renderAdminSlides() {
 function addProposalSlide() {
     syncLocalSlidesState();
     const insertIndex = state.proposalSlides.length - 1;
-    const newSlide = { text: '新告白文字...', imgUrl: '' };
+    const newSlide = { text: '新告白文字...', imgUrl: '', advanceMode: 'manual', autoSeconds: 4 };
     if (insertIndex < 0) {
         state.proposalSlides.push(newSlide);
+        expandedSlideIndexes = new Set([0]);
     } else {
         state.proposalSlides.splice(insertIndex, 0, newSlide);
+        expandedSlideIndexes = new Set([insertIndex]);
     }
     renderAdminSlides();
 }
@@ -686,6 +1126,7 @@ function deleteProposalSlide(idx) {
     if (confirm(`確定要刪除第 ${idx + 1} 頁告白嗎？`)) {
         syncLocalSlidesState();
         state.proposalSlides.splice(idx, 1);
+        expandedSlideIndexes = new Set([0]);
         renderAdminSlides();
     }
 }
@@ -694,7 +1135,7 @@ function deleteProposalSlide(idx) {
 function syncLocalSlidesState() {
     const container = document.getElementById('admin-slides-container');
     if (!container) return;
-    const cards = Array.from(container.children).filter(el => el.classList.contains('p-3'));
+    const cards = Array.from(container.children).filter(el => el.querySelector('.slide-text-input'));
 
     cards.forEach((card, i) => {
         if (!state.proposalSlides[i]) return;
@@ -703,6 +1144,15 @@ function syncLocalSlidesState() {
         const choicesInput = card.querySelector('.slide-choices-input');
         if (choicesInput) {
             state.proposalSlides[i].choices = choicesInput.value.trim();
+        }
+        const advanceRadio = card.querySelector('.slide-advance-mode-input:checked');
+        if (advanceRadio) {
+            state.proposalSlides[i].advanceMode = advanceRadio.value;
+        }
+        const secondsInput = card.querySelector('.slide-auto-seconds-input');
+        if (secondsInput) {
+            const secs = parseInt(secondsInput.value);
+            state.proposalSlides[i].autoSeconds = (secs >= 1 && secs <= 60) ? secs : 4;
         }
     });
 }
@@ -781,7 +1231,20 @@ function endProposalAndReturn() {
 // ────────────────────────────────────────────────────────
 // 💍 求婚同步廣播畫面：渲染邏輯
 // ────────────────────────────────────────────────────────
+// 自動跳頁計時器：只有 admin(求婚發起人)的裝置會啟動這個計時器並寫入下一頁，
+// 其他裝置只被動接收 currentSlideIndex 的變化 —— 避免兩支手機同時倒數、同時寫入，
+// 造成「一次跳兩頁」的競爭問題。
+let autoAdvanceTimerId = null;
+function clearAutoAdvanceTimer() {
+    if (autoAdvanceTimerId) {
+        clearTimeout(autoAdvanceTimerId);
+        autoAdvanceTimerId = null;
+    }
+}
+
 function renderProposalScreen() {
+    clearAutoAdvanceTimer(); // 每次重繪先清掉舊計時器，避免翻頁後舊計時器還在背景多跳一次
+
     const progressContainer = document.getElementById('proposal-progress');
     const contentArea = document.getElementById('proposal-content-area');
     const actionArea = document.getElementById('proposal-action-area');
@@ -867,8 +1330,20 @@ function renderProposalScreen() {
     } else {
         const hint = document.createElement('div');
         hint.className = "text-center";
-        hint.innerHTML = `<span class="text-[10px] text-slate-300 font-bold tracking-widest animate-pulse"><i class="fa-solid fa-heart text-red-200 mr-1"></i> 浪漫章節加載中...</span>`;
+        if (currentSlide.advanceMode === 'auto') {
+            hint.innerHTML = `<span class="text-[10px] text-slate-300 font-bold tracking-widest"><i class="fa-solid fa-clock text-red-200 mr-1"></i> 即將自動翻到下一頁...</span>`;
+        } else {
+            hint.innerHTML = `<span class="text-[10px] text-slate-300 font-bold tracking-widest animate-pulse"><i class="fa-solid fa-heart text-red-200 mr-1"></i> 浪漫章節加載中...</span>`;
+        }
         actionArea.appendChild(hint);
+
+        // 只有 admin 的裝置負責倒數並推進頁面，避免多裝置同時倒數造成跳兩頁的競爭問題
+        if (currentSlide.advanceMode === 'auto' && state.isPlanner) {
+            const seconds = Math.max(1, parseInt(currentSlide.autoSeconds) || 4);
+            autoAdvanceTimerId = setTimeout(() => {
+                syncSlidePage(1);
+            }, seconds * 1000);
+        }
     }
 
     // 3-4. 預覽模式下額外顯示退出預覽的按鈕
@@ -1051,6 +1526,7 @@ function switchScreen(screenId) {
     }
     if (previousScreen === 'proposal' && screenId !== 'proposal') {
         stopProposalMusicPlayer();
+        clearAutoAdvanceTimer();
     }
 }
 
@@ -1080,3 +1556,18 @@ window.calcEquals = calcEquals;
 window.endProposalAndReturn = endProposalAndReturn;
 window.exitProposalPreview = exitProposalPreview;
 window.toggleProposalMusicSound = toggleProposalMusicSound;
+// 以下為先前遺漏、導致按鈕點擊沒有反應的函式註冊（module 內的函式預設不會自動掛在 window 上）
+window.toggleScheduleReorderMode = toggleScheduleReorderMode;
+window.togglePackingReorderMode = togglePackingReorderMode;
+window.toggleSlideAccordion = toggleSlideAccordion;
+window.onAdvanceModeChange = onAdvanceModeChange;
+window.previewImageUrl = previewImageUrl;
+// 費用分攤功能
+window.openExpenseModal = openExpenseModal;
+window.closeExpenseModal = closeExpenseModal;
+window.addExpenseMember = addExpenseMember;
+window.deleteExpenseMember = deleteExpenseMember;
+window.saveExpenseRecordForm = saveExpenseRecordForm;
+window.resetExpenseForm = resetExpenseForm;
+window.editExpenseRecord = editExpenseRecord;
+window.deleteExpenseRecord = deleteExpenseRecord;

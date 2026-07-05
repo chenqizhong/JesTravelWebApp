@@ -12,6 +12,10 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .fade-in { animation: fadeIn 0.4s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .bg-gradient-romantic { background: linear-gradient(135deg, #fff5f5 0%, #fff0f6 100%); }
+        /* 手機拖曳排序修正：告訴瀏覽器這個元素的觸控手勢由 JS(SortableJS)接管，
+           不要被瀏覽器預設的「上下滑動捲頁」搶走，這是手機無法拖曳排序的根本原因 */
+        .cursor-move, .pack-drag-handle { touch-action: none; }
     </style>
 </head>
 <body class="bg-slate-50 font-sans antialiased text-slate-800">
@@ -25,7 +29,6 @@
                 <button id="tab-login-btn" onclick="switchLoginTab('login')" class="flex-1 py-2 text-xs font-black rounded-lg bg-white text-slate-700 shadow-sm transition-all">帳號登入</button>
                 <button id="tab-register-btn" onclick="switchLoginTab('register')" class="flex-1 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-600 transition-all">加入旅團</button>
             </div>
-            <!--登入介面標題-->
             <span id="login-title" class="block text-center text-lg font-black text-slate-700">沒有腳怎麼去旅遊<img class="inline-block h-[2.2em] align-middle ml-1" src="https://images.emojiterra.com/google/noto-emoji/animated-emoji/1f9ad.gif"></span>
             <div class="space-y-4">
                 <div>
@@ -139,8 +142,28 @@
                     <button onclick="syncSlidePage(1)" class="px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-lg">下一頁 ➡️</button>
                 </div>
             </div>
-            
         </div>
+    </div>
+
+    <!-- ════════════════════════════════════════
+         畫面四：求婚同步廣播畫面 (所有連線裝置共用)
+    ════════════════════════════════════════ -->
+    <div id="screen-proposal" class="hidden min-h-screen bg-gradient-romantic flex flex-col justify-between p-6">
+        <div class="w-full max-w-md mx-auto pt-2 flex justify-between items-center gap-3">
+            <div id="proposal-progress" class="flex gap-1.5 flex-1"></div>
+            <button id="proposal-music-toggle" onclick="toggleProposalMusicSound()" class="hidden w-9 h-9 rounded-full bg-white/70 shadow flex items-center justify-center text-red-400 shrink-0">
+                <i class="fa-solid fa-volume-xmark text-sm"></i>
+            </button>
+        </div>
+        <div class="w-full max-w-md mx-auto flex-1 flex flex-col justify-center my-6 text-center space-y-6">
+            <div id="proposal-content-area" class="space-y-4">
+                <div class="text-slate-300 py-12"><i class="fa-solid fa-heart text-red-300 text-3xl animate-bounce"></i></div>
+            </div>
+        </div>
+        <div class="w-full max-w-md mx-auto pb-4 flex flex-col items-center justify-center min-h-[80px]">
+            <div id="proposal-action-area" class="w-full flex flex-col items-center justify-center"></div>
+        </div>
+        <div id="proposal-yt-player" class="fixed opacity-0 pointer-events-none" style="width:1px;height:1px;overflow:hidden;bottom:0;left:0;"></div>
     </div>
 
     <!-- ════════════════════════════════════════

@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>沒有腳怎麼去旅遊</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 標籤LOGO -->
+    <link rel="icon" type="image/png" href="LOGO.gif">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <style>
@@ -16,6 +18,15 @@
         /* 手機拖曳排序修正：告訴瀏覽器這個元素的觸控手勢由 JS(SortableJS)接管，
            不要被瀏覽器預設的「上下滑動捲頁」搶走，這是手機無法拖曳排序的根本原因 */
         .cursor-move, .pack-drag-handle { touch-action: none; }
+        /* 排序模式：卡片輕微抖動提示，進入「排序模式」才會套用這個 class */
+        @keyframes jiggle {
+            0% { transform: rotate(-1deg); }
+            50% { transform: rotate(1deg); }
+            100% { transform: rotate(-1deg); }
+        }
+        .reorder-jiggle { animation: jiggle 0.22s infinite ease-in-out; touch-action: none; }
+        /* 手風琴收合動畫 */
+        .accordion-body { overflow: hidden; transition: max-height 0.25s ease; }
     </style>
 </head>
 <body class="bg-slate-50 font-sans antialiased text-slate-800">
@@ -29,7 +40,7 @@
                 <button id="tab-login-btn" onclick="switchLoginTab('login')" class="flex-1 py-2 text-xs font-black rounded-lg bg-white text-slate-700 shadow-sm transition-all">帳號登入</button>
                 <button id="tab-register-btn" onclick="switchLoginTab('register')" class="flex-1 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-600 transition-all">加入旅團</button>
             </div>
-            <span id="login-title" class="block text-center text-lg font-black text-slate-700">沒有腳怎麼去旅遊<img class="inline-block h-[2.2em] align-middle ml-1" src="https://images.emojiterra.com/google/noto-emoji/animated-emoji/1f9ad.gif"></span>
+            <span id="login-title" class="block text-center text-lg font-black text-slate-700">沒有腳怎麼去旅遊<img class="inline-block h-[2.2em] align-middle ml-1" src="LOGO.gif" alt="海豹"></span>
             <div class="space-y-4">
                 <div>
                     <label class="text-[11px] font-bold text-slate-400 block mb-1">旅團識別碼 (共同代碼)</label>
@@ -61,7 +72,7 @@
 
         <section class="px-4 pt-4">
             <div class="w-full h-40 rounded-2xl overflow-hidden border border-slate-100 shadow-sm relative">
-                <iframe id="google-map-iframe" class="w-full h-full border-0" src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d103706.74542385155!2d139.7040502!3d35.6735398!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x60188b857628235d%3A0xc0d00f9c5c35b85a!2z5p2x5Lqs!5e0!3m2!1szh-TW!2stw!4v1710000000000!5m2!1szh-TW!2stw" allowfullscreen="" loading="lazy"></iframe>
+                <iframe id="google-map-iframe" class="w-full h-full border-0" src="" allowfullscreen="" loading="lazy"></iframe>
             </div>
         </section>
         <section class="p-4 grid grid-cols-2 gap-3">
@@ -70,6 +81,12 @@
         </section>
 
         <div class="px-4 py-1 flex gap-2 overflow-x-auto no-scrollbar cursor-grab" id="day-tabs-container"></div>
+
+        <div class="px-4 flex justify-end">
+            <button id="schedule-reorder-toggle-btn" onclick="toggleScheduleReorderMode()" class="text-[11px] font-bold text-slate-400 px-3 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1">
+                <i class="fa-solid fa-arrows-up-down"></i> 排序
+            </button>
+        </div>
 
         <main class="flex-1 p-4 space-y-4" id="schedule-container"></main>
     </div>
@@ -174,23 +191,26 @@
             <h3 id="schedule-modal-title" class="font-black text-base text-slate-700">✏️ 編輯行程景點</h3>
             <input type="hidden" id="form-schedule-id">
             <div class="space-y-3">
-                <div class="grid grid-cols-2 gap-2">
-                    <div>
-                        <label class="text-[10px] font-bold text-slate-400 block mb-0.5">時間</label>
-                        <input type="time" id="form-schedule-time" class="w-full px-3 py-2 bg-slate-50 border rounded-xl font-bold text-xs">
-                    </div>
-                    <div>
-                        <label class="text-[10px] font-bold text-slate-400 block mb-0.5">景點照片連結 (URL)</label>
-                        <input type="text" id="form-schedule-img" placeholder="https://..." class="w-full px-3 py-2 bg-slate-50 border rounded-xl text-xs font-medium">
-                    </div>
+                <div>
+                    <label class="text-[10px] font-bold text-slate-400 block mb-0.5">時間</label>
+                    <input type="time" id="form-schedule-time" class="w-full px-3 py-2 bg-slate-50 border rounded-xl font-bold text-xs">
                 </div>
                 <div>
                     <label class="text-[10px] font-bold text-slate-400 block mb-0.5">景點名稱</label>
                     <input type="text" id="form-schedule-name" placeholder="例：東京鐵塔 🗼" class="w-full px-3 py-2 bg-slate-50 border rounded-xl font-medium text-sm">
                 </div>
                 <div>
-                    <label class="text-[10px] font-bold text-slate-400 block mb-0.5">詳細備註 / 連結</label>
+                    <label class="text-[10px] font-bold text-slate-400 block mb-0.5">景點照片連結 (URL)</label>
+                    <input type="text" id="form-schedule-img" placeholder="https://..." class="w-full px-3 py-2 bg-slate-50 border rounded-xl text-xs font-medium" oninput="previewImageUrl('form-schedule-img', 'form-schedule-img-hint')">
+                    <p id="form-schedule-img-hint" class="text-[10px] mt-1 min-h-[14px]"></p>
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-slate-400 block mb-0.5">詳細備註</label>
                     <textarea id="form-schedule-desc" placeholder="例：預約了 18:30 的景觀台門票" class="w-full px-3 py-2 bg-slate-50 border rounded-xl text-xs h-20"></textarea>
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-slate-400 block mb-0.5">🔗 參考連結 (選填，例：訂票網址、菜單、Google 地圖分享連結)</label>
+                    <input type="text" id="form-schedule-link" placeholder="https://..." class="w-full px-3 py-2 bg-slate-50 border rounded-xl text-xs font-medium">
                 </div>
             </div>
             <div class="flex gap-2 pt-2">
@@ -206,8 +226,13 @@
     <div id="packing-modal" class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center hidden">
         <div class="bg-white w-full max-w-md rounded-t-3xl p-6 space-y-4 max-h-[75vh] flex flex-col fade-in">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="font-black text-base text-slate-700">🎒 共享行李清單 (可拖曳排序)</h3>
-                <button onclick="closePackingModal()" class="text-slate-400 p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+                <h3 class="font-black text-base text-slate-700">🎒 共享行李清單</h3>
+                <div class="flex items-center gap-2">
+                    <button id="packing-reorder-toggle-btn" onclick="togglePackingReorderMode()" class="text-[11px] font-bold text-slate-400 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1">
+                        <i class="fa-solid fa-arrows-up-down"></i> 排序
+                    </button>
+                    <button onclick="closePackingModal()" class="text-slate-400 p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+                </div>
             </div>
             <div class="flex gap-2">
                 <input type="text" id="new-packing-item" placeholder="+ 新增行李項目..." class="flex-1 px-3 py-2 bg-slate-50 border text-xs rounded-xl focus:outline-none">
@@ -220,7 +245,7 @@
     <!-- ════════════════════════════════════════
          浮框：快速計算機 (所有旅團成員可用)
     ════════════════════════════════════════ -->
-    <div id="calculator-modal" class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center hidden">
+    <div id="calculator-modal" class="fixed inset-0 bg-black/50 z-50 flex items-end justify-center hidden">
         <div class="bg-white w-full max-w-md rounded-t-3xl p-6 space-y-4 fade-in">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="font-black text-base text-slate-700">🧮 快速計算機</h3>
@@ -251,6 +276,68 @@
                 <button onclick="calcPress('0')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm col-span-2">0</button>
                 <button onclick="calcPress('.')" class="py-3 bg-slate-50 font-bold rounded-xl text-sm">.</button>
                 <button onclick="calcEquals()" class="py-3 bg-[#FF9E64] text-white font-black rounded-xl text-sm">=</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════
+         浮框：費用分攤 (所有旅團成員可用)
+    ════════════════════════════════════════ -->
+    <div id="expense-modal" class="fixed inset-0 bg-black/50 z-40 flex items-end justify-center hidden">
+        <div class="bg-white w-full max-w-md rounded-t-3xl p-5 space-y-4 max-h-[85vh] flex flex-col fade-in">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-black text-base text-slate-700">💰 費用分攤</h3>
+                <div class="flex items-center gap-2">
+                    <button onclick="openCalculatorModal()" class="w-8 h-8 rounded-full bg-slate-50 border border-slate-100 text-slate-500 flex items-center justify-center" title="計算機"><i class="fa-solid fa-calculator text-xs"></i></button>
+                    <button onclick="closeExpenseModal()" class="text-slate-400 p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto no-scrollbar space-y-4 pr-1">
+                <!-- 成員管理 -->
+                <div>
+                    <h4 class="text-[11px] font-black text-slate-500 mb-1.5">👥 旅團成員</h4>
+                    <div id="expense-members-list" class="flex flex-wrap gap-1.5 mb-2"></div>
+                    <div class="flex gap-2">
+                        <input type="text" id="new-expense-member" placeholder="+ 新增成員姓名..." class="flex-1 px-3 py-1.5 bg-slate-50 border text-xs rounded-xl focus:outline-none">
+                        <button onclick="addExpenseMember()" class="px-3 py-1.5 bg-slate-800 text-white font-bold text-xs rounded-xl">新增</button>
+                    </div>
+                </div>
+
+                <!-- 新增/編輯花費表單 -->
+                <div class="bg-slate-50 border border-slate-100 rounded-2xl p-3 space-y-2">
+                    <h4 class="text-[11px] font-black text-slate-500">🧾 <span id="expense-form-title">新增一筆花費</span></h4>
+                    <input type="hidden" id="form-expense-id">
+                    <input type="text" id="form-expense-desc" placeholder="花費項目，例：晚餐、門票" class="w-full px-3 py-2 bg-white border text-xs rounded-xl">
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="number" id="form-expense-amount" placeholder="金額" min="0" step="0.01" class="w-full px-3 py-2 bg-white border text-xs rounded-xl">
+                        <input type="text" id="form-expense-currency" placeholder="幣別，例：TWD" class="w-full px-3 py-2 bg-white border text-xs rounded-xl">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 block mb-1">由誰先付？</label>
+                        <select id="form-expense-payer" class="w-full px-3 py-2 bg-white border text-xs rounded-xl"></select>
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 block mb-1">由誰均分？(可複選)</label>
+                        <div id="form-expense-participants" class="flex flex-wrap gap-1.5"></div>
+                    </div>
+                    <div class="flex gap-2 pt-1">
+                        <button onclick="resetExpenseForm()" class="flex-1 py-2 bg-slate-200 text-slate-600 font-bold text-xs rounded-xl">清空</button>
+                        <button onclick="saveExpenseRecordForm()" class="flex-1 py-2 bg-[#FF9E64] text-white font-black text-xs rounded-xl">儲存花費</button>
+                    </div>
+                </div>
+
+                <!-- 花費紀錄列表 -->
+                <div>
+                    <h4 class="text-[11px] font-black text-slate-500 mb-1.5">📋 花費紀錄</h4>
+                    <div id="expense-records-list" class="space-y-2"></div>
+                </div>
+
+                <!-- 結算結果 -->
+                <div>
+                    <h4 class="text-[11px] font-black text-slate-500 mb-1.5">✅ 結算建議</h4>
+                    <div id="expense-settlement-result" class="space-y-1.5"></div>
+                </div>
             </div>
         </div>
     </div>
