@@ -1,5 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getDatabase, ref, set, get, update, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBktdfxqqthd9BxEKYzpp846v2KUthP36Q",
@@ -13,6 +14,10 @@ const firebaseConfig = {
 };
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
+const auth = getAuth(app);
+const authReady = signInAnonymously(auth).catch((err) => {
+    console.error("Firebase 匿名登入失敗:", err);
+});
 
 const state = {
     currentScreen: 'login',
@@ -130,6 +135,7 @@ async function handleFaceIDLogin() {
     const localAccount = localStorage.getItem('local_account');
     const localPassword = localStorage.getItem('local_password');
     if (!localTripCode || !localAccount || !localPassword) return;
+    await authReady;
     const userRef = ref(db, `trips/${localTripCode}/users/${localAccount}`);
     const snapshot = await get(userRef);
     if (snapshot.exists() && snapshot.val().password === localPassword) {
@@ -166,6 +172,7 @@ async function handleAuthSubmit() {
     const account = document.getElementById('user-account-input').value.trim().toLowerCase();
     const password = document.getElementById('user-password-input').value.trim();
     if (!tripCode || !account || !password) return alert('請填寫所有欄位！');
+    await authReady;
     const userRef = ref(db, `trips/${tripCode}/users/${account}`);
     if (state.authMode === 'register') {
         if (account === 'admin') {
@@ -1279,7 +1286,7 @@ function renderProposalScreen() {
         contentArea.appendChild(img);
     }
     const textParagraph = document.createElement('p');
-    textParagraph.className = "text-base font-black text-slate-700 leading-relaxed fade-in px-4 whitespace-pre-line";
+    textParagraph.className = "text-2xl font-black text-slate-700 leading-relaxed fade-in px-4 whitespace-pre-line";
     textParagraph.innerText = currentSlide.text || '';
     contentArea.appendChild(textParagraph);
 
