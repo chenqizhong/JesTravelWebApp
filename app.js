@@ -847,7 +847,7 @@ function resetExpenseForm() {
     idInput.value = '';
     document.getElementById('form-expense-desc').value = '';
     document.getElementById('form-expense-amount').value = '';
-    document.getElementById('form-expense-currency').value = '';
+    document.getElementById('form-expense-currency').value = 'TWD';
     document.getElementById('form-expense-payer').value = '';
     document.getElementById('expense-form-title').innerText = '新增一筆花費';
     const participantsBox = document.getElementById('form-expense-participants');
@@ -1027,11 +1027,65 @@ function renderExpenseSettlement() {
     });
 }
 
+// 個人總花費：採「分攤後」金額計算(而非誰先付的金額)，因為這才代表每個人這趟旅程實際花掉多少錢。
+// 若改用「誰先付的」金額，代墊大筆花費的人帳面會暴增，其他人卻顯示 0，會嚴重失真。
+// 依幣別分開統計(不做匯率換算)，跟結算建議一樣是純衍生計算，不寫入資料庫。
+function computePersonalTotalSpending() {
+    const currencies = [...new Set(state.expenseRecords.map(e => e.currency))];
+    const nameMap = {};
+    state.expenseMembers.forEach(m => nameMap[m.id] = m.name);
+
+    return currencies.map(currency => {
+        const totals = {};
+        state.expenseMembers.forEach(m => totals[m.id] = 0);
+
+        state.expenseRecords.filter(e => e.currency === currency).forEach(exp => {
+            const participants = exp.participantIds || [];
+            if (participants.length === 0) return;
+            const share = exp.amount / participants.length;
+            participants.forEach(pid => {
+                if (totals[pid] === undefined) totals[pid] = 0;
+                totals[pid] += share;
+            });
+        });
+
+        const list = Object.keys(totals)
+            .map(id => ({ name: nameMap[id] || '(已刪除的成員)', amount: Math.round(totals[id] * 100) / 100 }))
+            .filter(t => t.amount > 0)
+            .sort((a, b) => b.amount - a.amount);
+
+        return { currency, list };
+    });
+}
+
+function renderExpensePersonalTotals() {
+    const container = document.getElementById('expense-personal-totals');
+    if (!container) return;
+    if (state.expenseRecords.length === 0 || state.expenseMembers.length === 0) {
+        container.innerHTML = '<p class="text-[11px] text-slate-300 text-center py-3">尚無資料可統計</p>';
+        return;
+    }
+    const results = computePersonalTotalSpending();
+    container.innerHTML = '';
+    results.forEach(({ currency, list }) => {
+        const block = document.createElement('div');
+        block.className = "bg-slate-50 border border-slate-100 rounded-xl p-2.5";
+        if (list.length === 0) {
+            block.innerHTML = `<p class="text-xs font-black text-slate-500 mb-1">${escapeHtml(currency)}</p><p class="text-[11px] text-slate-300">目前沒有分攤紀錄</p>`;
+        } else {
+            block.innerHTML = `<p class="text-xs font-black text-slate-500 mb-1.5">${escapeHtml(currency)}</p>` +
+                list.map(t => `<p class="text-[11px] text-slate-600 py-0.5 flex justify-between"><span class="font-bold">${escapeHtml(t.name)}</span><span class="font-black text-[#FF9E64]">${t.amount} ${escapeHtml(currency)}</span></p>`).join('');
+        }
+        container.appendChild(block);
+    });
+}
+
 function renderExpenseModal() {
     renderExpenseMembersChips();
     renderExpensePayerOptions();
     renderExpenseParticipantForm();
     renderExpenseRecordsList();
+    renderExpensePersonalTotals();
     renderExpenseSettlement();
 }
 
