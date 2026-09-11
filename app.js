@@ -35,6 +35,8 @@ const state = {
     packingList: [],
     expenseMembers: [],
     expenseRecords: [],
+    notebookSharedNotes: [],
+    notebookPersonalNotes: [],
     proposalSlides: [
         { text: '這趟旅程，看似是一起計畫的冒險...', imgUrl: '' },
         { text: '但其實，這是我這輩子最用心的佈局。', imgUrl: '' },
@@ -275,6 +277,22 @@ function startRealtimeSync() {
         }
     });
 
+    // 監聽記事本：共享記事本（所有成員共用同一份資料）
+    onValue(ref(db, `trips/${state.tripCode}/notebookShared`), (snapshot) => {
+        state.notebookSharedNotes = snapshot.exists() ? Object.values(snapshot.val()) : [];
+        if (!document.getElementById('notebook-modal').classList.contains('hidden')) {
+            renderNotebookModal();
+        }
+    });
+
+    // 監聽記事本：個人記事本（存放在自己帳號底下，其他成員讀不到）
+    onValue(ref(db, `trips/${state.tripCode}/notebookPersonal/${state.userAccount}`), (snapshot) => {
+        state.notebookPersonalNotes = snapshot.exists() ? Object.values(snapshot.val()) : [];
+        if (!document.getElementById('notebook-modal').classList.contains('hidden')) {
+            renderNotebookModal();
+        }
+    });
+
     // 監聽求婚資料（Slides、音樂、控制訊號一起監聽，確保資料一致性）
     onValue(ref(db, `trips/${state.tripCode}`), (snapshot) => {
         const data = snapshot.val();
@@ -440,6 +458,7 @@ function renderTripScreen() {
         <div class="flex gap-2">
             <button onclick="openExpenseModal()" class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-500 hover:bg-slate-100 transition" title="費用分攤"><i class="fa-solid fa-sack-dollar text-xs"></i></button>
             <button onclick="openCalculatorModal()" class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-500 hover:bg-slate-100 transition" title="計算機"><i class="fa-solid fa-calculator text-xs"></i></button>
+            <button onclick="openNotebookModal()" class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-500 hover:bg-slate-100 transition" title="記事本"><i class="fa-solid fa-note-sticky text-xs"></i></button>
             ${state.isPlanner ? `
                 <button onclick="triggerSecureAction('admin')" class="w-8 h-8 rounded-full bg-orange-50/50 flex items-center justify-center text-[#FF9E64] hover:bg-orange-100/50 transition"><i class="fa-solid fa-gear text-xs"></i></button>
             ` : ''}
@@ -1090,6 +1109,400 @@ function renderExpenseModal() {
 }
 
 // ────────────────────────────────────────────────────────
+// 📝 共享/個人記事本（所有旅團成員可用，支援基本 Markdown）
+// 共享記事本存在 trips/{團號}/notebookShared，所有成員共用同一份；
+// 個人記事本存在 trips/{團號}/notebookPersonal/{自己的帳號}，只有自己讀寫得到。
+// ────────────────────────────────────────────────────────
+let notebookActiveTab = 'shared';   // 'shared' | 'personal'
+let notebookViewMode = 'list';      // 'list' | 'editor'
+let notebookSearchQuery = '';
+
+function notebookNotesPath(scope) {
+    return scope === 'personal'
+        ? `trips/${state.tripCode}/notebookPersonal/${state.userAccount}`
+        : `trips/${state.tripCode}/notebookShared`;
+}
+function getNotebookNotesForScope(scope) {
+    return scope === 'personal' ? state.notebookPersonalNotes : state.notebookSharedNotes;
+}
+
+function openNotebookModal() {
+    notebookViewMode = 'list';
+    notebookSearchQuery = '';
+    const searchInput = document.getElementById('notebook-search-input');
+    if (searchInput) searchInput.value = '';
+    document.getElementById('notebook-modal').classList.remove('hidden');
+    renderNotebookModal();
+}
+function closeNotebookModal() {
+    document.getElementById('notebook-modal').classList.add('hidden');
+}
+function switchNotebookTab(tab) {
+    notebookActiveTab = tab;
+    notebookViewMode = 'list';
+    renderNotebookModal();
+}
+function filterNotebookSearch(value) {
+    notebookSearchQuery = value.trim().toLowerCase();
+    renderNotebookNotesList();
+}
+
+function renderNotebookModal() {
+    const listView = document.getElementById('notebook-list-view');
+    const editorView = document.getElementById('notebook-editor-view');
+    if (!listView || !editorView) return;
+
+    if (notebookViewMode === 'editor') {
+        listView.classList.add('hidden');
+        editorView.classList.remove('hidden');
+        editorView.classList.add('flex');
+        return;
+    }
+
+    editorView.classList.add('hidden');
+    editorView.classList.remove('flex');
+    listView.classList.remove('hidden');
+
+    const activeCls = "flex-1 py-1.5 text-xs font-black rounded-lg bg-white text-slate-700 shadow-sm transition-all";
+    const inactiveCls = "flex-1 py-1.5 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-600 transition-all";
+    const sharedBtn = document.getElementById('notebook-tab-shared-btn');
+    const personalBtn = document.getElementById('notebook-tab-personal-btn');
+    if (sharedBtn) sharedBtn.className = notebookActiveTab === 'shared' ? activeCls : inactiveCls;
+    if (personalBtn) personalBtn.className = notebookActiveTab === 'personal' ? activeCls : inactiveCls;
+
+    renderNotebookNotesList();
+}
+
+function renderNotebookNotesList() {
+    const list = document.getElementById('notebook-notes-list');
+    if (!list) return;
+    const scope = notebookActiveTab;
+    let notes = getNotebookNotesForScope(scope).slice();
+
+    if (notebookSearchQuery) {
+        notes = notes.filter(n => (n.title || '').toLowerCase().includes(notebookSearchQuery));
+    }
+    notes.sort((a, b) => {
+        if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+        return (b.updatedAt || 0) - (a.updatedAt || 0);
+    });
+
+    if (notes.length === 0) {
+        list.innerHTML = `<p class="text-[11px] text-slate-300 text-center py-6">${notebookSearchQuery ? '沒有符合搜尋的筆記' : (scope === 'shared' ? '尚未有任何共享筆記' : '尚未有任何個人筆記')}</p>`;
+        return;
+    }
+
+    list.innerHTML = notes.map(note => {
+        const plainSnippet = stripMarkdownToPlainText(note.content || '').replace(/\n+/g, ' ').trim();
+        const snippet = plainSnippet.length > 70 ? plainSnippet.slice(0, 70) + '…' : (plainSnippet || '（空白筆記）');
+        return `
+            <div class="bg-white border border-slate-100 rounded-xl p-3 text-xs shadow-sm space-y-1.5">
+                <div class="flex justify-between items-start gap-2">
+                    <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                        ${note.pinned ? '<i class="fa-solid fa-thumbtack text-[#FF9E64] text-[10px] shrink-0"></i>' : ''}
+                        <h4 class="font-bold text-slate-700 text-sm truncate">${escapeHtml(note.title || '無標題筆記')}</h4>
+                    </div>
+                    <div class="flex items-center gap-0.5 shrink-0">
+                        <button title="${note.pinned ? '取消置頂' : '置頂'}" onclick="toggleNotebookPin('${scope}','${note.id}', ${!!note.pinned})" class="${note.pinned ? 'text-[#FF9E64]' : 'text-slate-300 hover:text-[#FF9E64]'} p-1"><i class="fa-solid fa-thumbtack text-[11px]"></i></button>
+                        <button title="複製純文字" onclick="copyNotebookNoteText('${scope}','${note.id}')" class="text-slate-300 hover:text-slate-500 p-1"><i class="fa-regular fa-copy text-[11px]"></i></button>
+                        <button title="編輯" onclick="openNotebookEditor('${scope}','${note.id}')" class="text-slate-300 hover:text-[#FF9E64] p-1"><i class="fa-solid fa-pen text-[11px]"></i></button>
+                    </div>
+                </div>
+                <p class="text-slate-400 leading-relaxed">${escapeHtml(snippet)}</p>
+                <p class="text-[10px] text-slate-300 text-right">最後編輯於 ${formatNotebookTimestamp(note.updatedAt)}</p>
+            </div>
+        `;
+    }).join('');
+}
+
+function openNotebookEditor(scope, noteId = null) {
+    scope = scope || notebookActiveTab;
+    notebookActiveTab = scope;
+    notebookViewMode = 'editor';
+
+    document.getElementById('form-notebook-scope').value = scope;
+    const deleteBtn = document.getElementById('notebook-delete-btn');
+
+    if (noteId) {
+        const note = getNotebookNotesForScope(scope).find(n => n.id === noteId);
+        document.getElementById('form-notebook-id').value = noteId;
+        document.getElementById('form-notebook-title').value = note ? (note.title || '') : '';
+        document.getElementById('form-notebook-content').value = note ? (note.content || '') : '';
+        if (deleteBtn) deleteBtn.classList.remove('hidden');
+    } else {
+        document.getElementById('form-notebook-id').value = '';
+        document.getElementById('form-notebook-title').value = '';
+        document.getElementById('form-notebook-content').value = '';
+        if (deleteBtn) deleteBtn.classList.add('hidden');
+    }
+
+    toggleNotebookEditorPreview('edit');
+    renderNotebookModal();
+}
+function closeNotebookEditor() {
+    notebookViewMode = 'list';
+    renderNotebookModal();
+}
+
+function toggleNotebookEditorPreview(mode) {
+    const textarea = document.getElementById('form-notebook-content');
+    const previewArea = document.getElementById('notebook-editor-preview-area');
+    const toolbar = document.getElementById('notebook-editor-toolbar');
+    const editBtn = document.getElementById('notebook-editor-edit-btn');
+    const previewBtn = document.getElementById('notebook-editor-preview-btn');
+    const activeCls = "flex-1 py-1.5 text-[11px] font-black rounded-lg bg-white text-slate-700 shadow-sm transition-all";
+    const inactiveCls = "flex-1 py-1.5 text-[11px] font-bold rounded-lg text-slate-400 hover:text-slate-600 transition-all";
+    if (editBtn) editBtn.className = mode === 'edit' ? activeCls : inactiveCls;
+    if (previewBtn) previewBtn.className = mode === 'preview' ? activeCls : inactiveCls;
+
+    if (mode === 'preview') {
+        if (previewArea) previewArea.innerHTML = renderMarkdownSafe(textarea ? textarea.value : '') || '<p class="text-slate-300">（尚無內容）</p>';
+        if (textarea) textarea.classList.add('hidden');
+        if (previewArea) previewArea.classList.remove('hidden');
+        if (toolbar) toolbar.classList.add('hidden');
+    } else {
+        if (textarea) textarea.classList.remove('hidden');
+        if (previewArea) previewArea.classList.add('hidden');
+        if (toolbar) toolbar.classList.remove('hidden');
+    }
+}
+
+// 找出遊標所在那一行的起始位置（用來插入「行首前綴」類型的語法，例如標題、清單）
+function notebookLineStart(text, pos) {
+    return text.lastIndexOf('\n', pos - 1) + 1;
+}
+
+// 格式按鈕：點下去直接把 Markdown 符號打好，讓不熟悉語法的人也能用。
+// 有選取文字時包住選取範圍；沒有選取時插入預設文字並自動選取，方便直接輸入覆蓋。
+function insertNotebookMarkdown(type) {
+    const textarea = document.getElementById('form-notebook-content');
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const value = textarea.value;
+    const selectedText = value.slice(start, end);
+    let newValue, newStart, newEnd;
+
+    const wrapSelection = (marker, placeholder) => {
+        const text = selectedText || placeholder;
+        newValue = value.slice(0, start) + marker + text + marker + value.slice(end);
+        newStart = start + marker.length;
+        newEnd = newStart + text.length;
+    };
+    const prefixLine = (prefix) => {
+        const lineStart = notebookLineStart(value, start);
+        newValue = value.slice(0, lineStart) + prefix + value.slice(lineStart);
+        newStart = start + prefix.length;
+        newEnd = end + prefix.length;
+    };
+
+    switch (type) {
+        case 'heading': prefixLine('# '); break;
+        case 'bold': wrapSelection('**', '粗體文字'); break;
+        case 'italic': wrapSelection('*', '斜體文字'); break;
+        case 'code': wrapSelection('`', '程式碼'); break;
+        case 'ul': prefixLine('- '); break;
+        case 'todo': prefixLine('- [ ] '); break;
+        case 'quote': prefixLine('> '); break;
+        case 'link': {
+            const text = selectedText || '連結文字';
+            const insertText = `[${text}](https://)`;
+            newValue = value.slice(0, start) + insertText + value.slice(end);
+            const urlStart = start + text.length + 3; // 跳過 "[文字]("
+            newStart = urlStart;
+            newEnd = urlStart + 'https://'.length; // 選取網址部分，方便直接貼上覆蓋
+            break;
+        }
+        case 'hr': {
+            const needsLeadingNewline = start > 0 && value[start - 1] !== '\n';
+            const insertText = (needsLeadingNewline ? '\n' : '') + '---\n';
+            newValue = value.slice(0, start) + insertText + value.slice(end);
+            newStart = newEnd = start + insertText.length;
+            break;
+        }
+        default: return;
+    }
+
+    textarea.value = newValue;
+    textarea.focus();
+    textarea.setSelectionRange(newStart, newEnd);
+}
+
+function saveNotebookNote() {
+    const scope = document.getElementById('form-notebook-scope').value || notebookActiveTab;
+    const id = document.getElementById('form-notebook-id').value;
+    const title = document.getElementById('form-notebook-title').value.trim();
+    const content = document.getElementById('form-notebook-content').value;
+    if (!title) return alert('請輸入筆記標題！');
+
+    const noteId = id ? id : "note_" + Date.now();
+    const existing = getNotebookNotesForScope(scope).find(n => n.id === id);
+    set(ref(db, `${notebookNotesPath(scope)}/${noteId}`), {
+        id: noteId,
+        title,
+        content,
+        pinned: existing ? !!existing.pinned : false,
+        createdAt: existing ? existing.createdAt : Date.now(),
+        updatedAt: Date.now()
+    }).then(() => {
+        closeNotebookEditor();
+    }).catch((err) => {
+        console.error('儲存筆記失敗:', err);
+        alert('❌ 儲存失敗，請檢查網路連線後再試一次！');
+    });
+}
+
+function deleteNotebookNoteFromEditor() {
+    const scope = document.getElementById('form-notebook-scope').value || notebookActiveTab;
+    const id = document.getElementById('form-notebook-id').value;
+    if (!id) return;
+    if (confirm('確定要刪除這篇筆記嗎？')) {
+        set(ref(db, `${notebookNotesPath(scope)}/${id}`), null);
+        closeNotebookEditor();
+    }
+}
+
+function toggleNotebookPin(scope, id, currentPinned) {
+    set(ref(db, `${notebookNotesPath(scope)}/${id}/pinned`), !currentPinned);
+}
+
+async function copyNotebookNoteText(scope, id) {
+    const note = getNotebookNotesForScope(scope).find(n => n.id === id);
+    if (!note) return;
+    const plainText = (note.title ? note.title + '\n\n' : '') + stripMarkdownToPlainText(note.content || '');
+    try {
+        await navigator.clipboard.writeText(plainText);
+        alert('✅ 已複製純文字內容！');
+    } catch (err) {
+        console.warn('剪貼簿 API 複製失敗，改用備援方式:', err);
+        const tempTextarea = document.createElement('textarea');
+        tempTextarea.value = plainText;
+        tempTextarea.style.position = 'fixed';
+        tempTextarea.style.opacity = '0';
+        document.body.appendChild(tempTextarea);
+        tempTextarea.select();
+        try {
+            document.execCommand('copy');
+            alert('✅ 已複製純文字內容！');
+        } catch (e) {
+            alert('❌ 複製失敗，請手動選取文字複製。');
+        }
+        document.body.removeChild(tempTextarea);
+    }
+}
+
+function formatNotebookTimestamp(ts) {
+    if (!ts) return '尚未儲存';
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// 輕量 Markdown 轉換：先把使用者輸入整段跳脫成安全的 HTML 字串，再對「已跳脫」的文字
+// 套用語法轉換（* # - 等符號本身不會被跳脫，仍可正常比對），避免筆記內容被拿來做 XSS 注入。
+function renderMarkdownSafe(rawText) {
+    if (!rawText) return '';
+    const lines = escapeHtml(rawText).split('\n');
+    let html = '';
+    let listType = null; // 'ul' | 'ol' | null
+    let paragraphBuffer = [];
+
+    function flushParagraph() {
+        if (paragraphBuffer.length > 0) {
+            html += `<p class="mb-2">${paragraphBuffer.join('<br>')}</p>`;
+            paragraphBuffer = [];
+        }
+    }
+    function closeList() {
+        if (listType) {
+            html += listType === 'ul' ? '</ul>' : '</ol>';
+            listType = null;
+        }
+    }
+    function applyInline(text) {
+        return text
+            .replace(/`([^`]+)`/g, '<code class="bg-slate-100 px-1 rounded">$1</code>')
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+            .replace(/_([^_]+)_/g, '<em>$1</em>')
+            .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-[#FF9E64] underline">$1</a>');
+    }
+
+    lines.forEach(line => {
+        const trimmed = line.trim();
+
+        if (trimmed === '') { closeList(); flushParagraph(); return; }
+        if (/^---+$/.test(trimmed)) { closeList(); flushParagraph(); html += '<hr class="my-2 border-slate-200">'; return; }
+
+        const headingMatch = trimmed.match(/^(#{1,3})\s+(.*)$/);
+        if (headingMatch) {
+            closeList(); flushParagraph();
+            const level = headingMatch[1].length;
+            const sizeCls = level === 1 ? 'text-base font-black' : level === 2 ? 'text-sm font-black' : 'text-sm font-bold';
+            html += `<p class="${sizeCls} text-slate-700 mt-1 mb-1">${applyInline(headingMatch[2])}</p>`;
+            return;
+        }
+        const quoteMatch = trimmed.match(/^&gt;\s?(.*)$/);
+        if (quoteMatch) {
+            closeList(); flushParagraph();
+            html += `<p class="border-l-2 border-orange-200 pl-2 text-slate-400 italic mb-2">${applyInline(quoteMatch[1])}</p>`;
+            return;
+        }
+        const todoMatch = trimmed.match(/^[-*]\s+\[( |x|X)\]\s+(.*)$/);
+        if (todoMatch) {
+            flushParagraph();
+            if (listType !== 'ul') { closeList(); html += '<ul class="list-none pl-0 space-y-0.5 mb-2">'; listType = 'ul'; }
+            const checked = todoMatch[1].toLowerCase() === 'x';
+            html += `<li class="flex items-start gap-1.5"><span class="mt-0.5">${checked ? '☑' : '☐'}</span><span class="${checked ? 'line-through text-slate-300' : ''}">${applyInline(todoMatch[2])}</span></li>`;
+            return;
+        }
+        const ulMatch = trimmed.match(/^[-*]\s+(.*)$/);
+        if (ulMatch) {
+            flushParagraph();
+            if (listType !== 'ul') { closeList(); html += '<ul class="list-disc pl-4 space-y-0.5 mb-2">'; listType = 'ul'; }
+            html += `<li>${applyInline(ulMatch[1])}</li>`;
+            return;
+        }
+        const olMatch = trimmed.match(/^\d+\.\s+(.*)$/);
+        if (olMatch) {
+            flushParagraph();
+            if (listType !== 'ol') { closeList(); html += '<ol class="list-decimal pl-4 space-y-0.5 mb-2">'; listType = 'ol'; }
+            html += `<li>${applyInline(olMatch[1])}</li>`;
+            return;
+        }
+
+        closeList();
+        paragraphBuffer.push(applyInline(trimmed));
+    });
+    closeList();
+    flushParagraph();
+    return html;
+}
+
+// 供「一鍵複製純文字」使用：去除常見 Markdown 符號，保留內容本身方便貼到 LINE 等地方分享
+function stripMarkdownToPlainText(rawText) {
+    if (!rawText) return '';
+    return rawText
+        .split('\n')
+        .map(line => {
+            let t = line;
+            t = t.replace(/^\s*#{1,6}\s+/, '');
+            t = t.replace(/^\s*>\s?/, '');
+            t = t.replace(/^(\s*)[-*]\s+\[( |x|X)\]\s+/, (m, indent, mark) => `${indent}${mark.toLowerCase() === 'x' ? '☑' : '☐'} `);
+            t = t.replace(/^(\s*)[-*]\s+/, '$1• ');
+            t = t.replace(/^(\s*)\d+\.\s+/, '$1');
+            t = t.replace(/\*\*([^*]+)\*\*/g, '$1');
+            t = t.replace(/`([^`]+)`/g, '$1');
+            t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1（$2）');
+            t = t.replace(/\*([^*]+)\*/g, '$1');
+            t = t.replace(/_([^_]+)_/g, '$1');
+            t = t.replace(/^-{3,}$/, '');
+            return t;
+        })
+        .join('\n');
+}
+
+// ────────────────────────────────────────────────────────
 // 📖 求婚顧問後台：動態投影片渲染與儲存（支援動態增刪、手風琴收合、自動/手動翻頁設定）
 // ────────────────────────────────────────────────────────
 let expandedSlideIndexes = new Set([0]);
@@ -1632,3 +2045,16 @@ window.saveExpenseRecordForm = saveExpenseRecordForm;
 window.resetExpenseForm = resetExpenseForm;
 window.editExpenseRecord = editExpenseRecord;
 window.deleteExpenseRecord = deleteExpenseRecord;
+// 記事本功能
+window.openNotebookModal = openNotebookModal;
+window.closeNotebookModal = closeNotebookModal;
+window.switchNotebookTab = switchNotebookTab;
+window.filterNotebookSearch = filterNotebookSearch;
+window.openNotebookEditor = openNotebookEditor;
+window.closeNotebookEditor = closeNotebookEditor;
+window.toggleNotebookEditorPreview = toggleNotebookEditorPreview;
+window.insertNotebookMarkdown = insertNotebookMarkdown;
+window.saveNotebookNote = saveNotebookNote;
+window.deleteNotebookNoteFromEditor = deleteNotebookNoteFromEditor;
+window.toggleNotebookPin = toggleNotebookPin;
+window.copyNotebookNoteText = copyNotebookNoteText;
